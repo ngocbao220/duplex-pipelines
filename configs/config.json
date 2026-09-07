@@ -1,0 +1,96 @@
+{
+  "source": {
+    "feeds_db_url": "https://public.podcastindex.org/podcastindex_feeds.db.tgz",
+    "languages": ["vi", "vi-vn"],
+    "feed_allowlist": "configs/allowlist.jsonl",
+    "youtube_allowlist": "configs/youtube_allowlist.json",
+    "youtube_only": false,
+    "youtube_cookies": null,
+    "youtube_cookies_from_browser": null,
+    "target_hours": 1,
+    "episode_limit_per_feed": null
+  },
+  "metadata": {
+    "language": "vi"
+  },
+  "audio": {
+    "output_dir": "data/wds",
+    "cache_dir": "data/cache",
+    "sample_rate": 16000,
+    "channels": 1,
+    "mp3_bitrate_kbps": 128,
+    "min_original_sample_rate": 16000,
+    "min_original_bitrate": 32000
+  },
+  "runtime": {
+    "device": "auto",
+    "allow_cpu_fallback": true,
+    "log_root": "logs",
+    "run_id": null,
+    "rss_workers": 16,
+    "download_workers": 4,
+    "process_workers": 4,
+    "separation_workers": 2,
+    "scratch_dir": null,
+    "timeout_seconds": 30,
+    "node_index": 0,
+    "num_nodes": 1,
+    "debug_outputs": {
+      "enabled": true,
+      "dir": "outputs"
+    },
+    "multi_gpu": {
+      "enabled": true,
+      "device_ids": [0, 1],
+      "strategy": "round_robin"
+    }
+  },
+  "diarization": {
+    "enabled": true,
+    "backend": "pyannote",
+    "model": "pyannote/speaker-diarization-community-1",
+    "device": "auto",
+    "dialogue_gap_seconds": 5.0,
+    "dialogue_min_duration_seconds": 10.0,
+    "dialogue_max_duration_seconds": 600.0,
+    "dialogue_max_single_speaker_ratio": 0.8
+  },
+  "separation": {
+    "enabled": true,
+    "backend": "dialoguesidon",
+    "model": "sarulab-speech/DialogueSidon",
+    "num_steps": 30
+  },
+  "benchmark": {
+    "enabled": true,
+    "metrics": ["squim_mos", "sq_stoi", "sq_pesq", "sq_si_sdr", "itc", "itd"],
+    "output_dir": "reports",
+    "device": "auto",
+    "dnsmos_model_path": null,
+    "squim_objective": {
+      "enabled": true
+    },
+    "squim_subjective": {
+      "enabled": true,
+      "reference_path": null
+    },
+    "speaker_embedding_model": "speechbrain/spkrec-ecapa-voxceleb"
+  },
+  "cholimex": {
+    "enabled": false,
+    "backchannel_max_duration": 1.0,
+    "min_vad_duration": 0.0,
+    "vad_onset": null,
+    "vad_offset": null,
+    "merge_gap": 0.0,
+    "min_reference_duration": 2.0,
+    "cosine_similarity_threshold": 0.5,
+    "overlap_padding": 0.1,
+    "proposal_backend": "dialoguesidon",
+    "proposal_model": "sarulab-speech/DialogueSidon",
+    "overlap_separator_backend": "dialoguesidon",
+    "overlap_separator_model": "sarulab-speech/DialogueSidon",
+    "speaker_embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
+    "output_stereo": false
+  }
+}
