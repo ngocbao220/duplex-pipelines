@@ -1,6 +1,0 @@
--r base.txt
-
-torch
-torchaudio
-librosa
-silero-vad

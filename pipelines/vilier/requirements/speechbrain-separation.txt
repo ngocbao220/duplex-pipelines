@@ -1,4 +1,0 @@
--r vad.txt
-
-# Use this profile for overlap_separation.backend=speechbrain.
-speechbrain

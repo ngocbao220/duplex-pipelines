@@ -1,4 +1,0 @@
--r vad.txt
-
-pyyaml
-huggingface_hub
