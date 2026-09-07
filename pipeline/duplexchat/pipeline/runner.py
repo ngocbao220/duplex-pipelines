@@ -132,7 +132,7 @@ def run_single_audio(
     with tqdm(total=5, desc=f"{audio_path.stem} / save outputs", unit="file", leave=False) as pbar:
         out_A, out_B = write_tracks(output_prefix, phase_output_dir, spk0, spk1, out_sr, separation_backend, separation_model)
         pbar.update(5)
-    
+
     print(f"Done! Saved to:")
     print(f" - {out_A} (Người A)")
     print(f" - {out_B} (Người B)")
@@ -148,7 +148,7 @@ def main():
     parser.add_argument("--separation-model", default=None, help="Separation model id or alias")
     parser.add_argument("--output-prefix", default="output_speaker", help="Output WAV prefix, e.g. runs/sortformer__sepformer/output")
     parser.add_argument("--output-dir", default=None, help="Directory for phase outputs and labels")
-    
+
     args = parser.parse_args()
     run_single_audio(
         args.audio_path,
