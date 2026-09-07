@@ -29,7 +29,7 @@ class IsolatedClearVoice:
     def separate(self, audio, sample_rate):
         import numpy as np
         if self.child is None:
-            project = ROOT / 'pipelines/vilier/clearvoice-runtime'
+            project = ROOT / 'pipeline/vilier/clearvoice-runtime'
             env = dict(os.environ)
             env.pop('VIRTUAL_ENV', None)
             env.pop('PYTHONPATH', None)

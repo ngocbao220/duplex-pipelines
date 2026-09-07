@@ -113,7 +113,8 @@ def _conversation_summary(segments: list[dict]) -> dict:
 
 def main() -> None:
     suppress_pyannote_tf32_warning()
-    parser = argparse.ArgumentParser(description="Debug DuplexChat on one local audio sample.")
+    parser = argparse.ArgumentParser(description="Run one two-speaker pipeline on a local audio sample.")
+    parser.add_argument("--pipeline", choices=["vilier", "duplexchat", "cholimex"], default="duplexchat")
     parser.add_argument("--input", required=True, help="Input audio path.")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--diarize-chunk", type=float, default=60.0)
@@ -124,12 +125,20 @@ def main() -> None:
     parser.add_argument("--separation-model", default=DEFAULT_SEPARATION_MODEL)
     parser.add_argument("--runtime-device", default="auto", help="Device policy: auto, cpu, cuda, or cuda:N.")
     parser.add_argument("--debug", action="store_true", help="Persist intermediate phase artifacts under output/debug.")
+    parser.add_argument("--gt-speaker-a", type=Path)
+    parser.add_argument("--gt-speaker-b", type=Path)
     args = parser.parse_args()
 
     input_path = Path(args.input)
     if not input_path.is_file():
         parser.error(f"input audio file does not exist: {input_path}")
     output_dir = args.output_dir or Path("outputs") / input_path.stem
+    if args.pipeline != "duplexchat":
+        from comparison.single import run_single
+        try:
+            raise SystemExit(run_single(args.pipeline, input_path, output_dir, args.debug, args.gt_speaker_a, args.gt_speaker_b))
+        except ValueError as exc:
+            parser.error(str(exc))
     output_dir.mkdir(parents=True, exist_ok=True)
     output_prefix = output_dir / "speaker"
 

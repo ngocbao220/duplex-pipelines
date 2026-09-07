@@ -1,0 +1,43 @@
+"""Single-file bridge to the same isolated workers used by OtoSpeech."""
+from __future__ import annotations
+
+import json
+import uuid
+from pathlib import Path
+from types import SimpleNamespace
+
+from .runner import ROOT, code_identity, launch_pipeline, pipeline_config
+from .contract import write_json
+
+
+def run_single(name: str, source: Path, output: Path, debug: bool, gt_a: Path | None, gt_b: Path | None) -> int:
+    """Run one adapter without ever passing reference audio to its worker."""
+    from duplexchat_pipe.config import load_config
+    from duplexchat_pipe import benchmark
+
+    if bool(gt_a) != bool(gt_b):
+        raise ValueError("--gt-speaker-a and --gt-speaker-b must be provided together")
+    cfg = load_config(ROOT / "configs/config.json")
+    args = SimpleNamespace(debug=debug, vilier_config=ROOT / "configs/vilier.json",
+                           duplexchat_config=ROOT / "configs/duplexchat.json", sample_rate=16000)
+    run_dir = output.parent / ".runs" / uuid.uuid4().hex
+    result_path = run_dir / "results.json"
+    request = {"pipeline": name, "config": pipeline_config(name, args, cfg),
+               "code": code_identity(name), "force": False, "pred_root": str(output.parent),
+               "results": str(result_path), "samples": [{"key": output.name, "mixture": str(source)}]}
+    exit_code = launch_pipeline(name, request, run_dir)
+    rows = json.loads(result_path.read_text()) if result_path.exists() else []
+    row = rows[0] if rows else {"status": "failed", "error": "worker did not write result"}
+    if row.get("status") != "complete":
+        raise RuntimeError(row.get("error", f"worker exit={exit_code}"))
+    report = output / "benchmark.json"
+    if gt_a and gt_b:
+        score = benchmark.score_reference_sample({"key": output.name, "gt_speaker_1": str(gt_a), "gt_speaker_2": str(gt_b)}, output.parent, 16000, -40.0, -20.0)
+    else:
+        score = benchmark._null_reference_row(output.name, "reference_unavailable", {"ground_truth": "not provided"})
+    write_json(report, score)
+    manifest = json.loads((output / "run.json").read_text())
+    manifest["benchmark"] = {"mode": "reference" if gt_a else "reference_free", "report": str(report), "result": score}
+    write_json(output / "run.json", manifest)
+    print(f"Done\n-> speakerA.wav: {output / 'speakerA.wav'}\n-> speakerB.wav: {output / 'speakerB.wav'}\n-> benchmark.json: {report}\n-> run.json: {output / 'run.json'}", flush=True)
+    return exit_code

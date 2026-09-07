@@ -22,14 +22,15 @@ def _run_otospeech(cfg, args: argparse.Namespace) -> int:
 
 def main() -> None:
     suppress_pyannote_tf32_warning()
-    parser = argparse.ArgumentParser(description="Run DuplexChat end-to-end pipeline.")
+    parser = argparse.ArgumentParser(description="Run a two-speaker pipeline on OtoSpeech or crawl input.")
     parser.add_argument("--config", type=Path, default=Path("configs/config.json"))
     parser.add_argument("--target_hours", type=float, default=None)
     parser.add_argument("--youtube-only", action="store_true")
     parser.add_argument("--otospeech-root", type=Path, default=None, help="Use a local dataset without downloading.")
     parser.add_argument("--max-samples", type=int, default=None, help="Bound the number of samples for a smoke run.")
     parser.add_argument("--max-seconds", type=float, default=None, help="Bound each mixture for a real smoke run; originals remain intact.")
-    parser.add_argument("--data", choices=["crawl", "oto-speech"], default="crawl")
+    parser.add_argument("--pipeline", choices=["vilier", "duplexchat", "cholimex", "all"], default=None)
+    parser.add_argument("--data", choices=["crawl", "otospeech"], default="crawl")
     parser.add_argument("--max_gb", type=float, default=10.0, help="Maximum OtoSpeech download size in GB.")
     parser.add_argument("--debug", action="store_true", help="Persist intermediate per-sample artifacts.")
     parser.add_argument("--output-root", type=Path, default=Path("outputs"))
@@ -42,9 +43,10 @@ def main() -> None:
     parser.add_argument("--vad-threshold-db", type=float, default=-40.0)
     parser.add_argument("--crosstalk-threshold-db", type=float, default=-20.0)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--vilier-config", type=Path, default=Path("configs/vilier.json"))
+    parser.add_argument("--duplexchat-config", type=Path, default=Path("configs/duplexchat.json"))
     args = parser.parse_args()
 
-    args.pipeline = "duplexchat"
     for name in ("max_gb", "sample_rate", "max_samples", "max_seconds"):
         value = getattr(args, name)
         if value is not None and (not math.isfinite(value) or value <= 0):
@@ -54,8 +56,12 @@ def main() -> None:
         cfg.target_hours = args.target_hours
     if args.youtube_only:
         cfg.youtube_only = True
-    if args.data == "oto-speech":
+    if args.data == "otospeech":
+        if args.pipeline is None:
+            parser.error("--pipeline is required when --data otospeech")
         raise SystemExit(_run_otospeech(cfg, args))
+    if args.pipeline is not None:
+        parser.error("--pipeline is only valid with --data otospeech")
     run_phase(cfg, "end2end")
 
 

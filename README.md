@@ -1,4 +1,36 @@
-# DuplexChat
+# duplex-pipelines
+
+Một repo chạy ba pipeline tách speaker trên cùng input: `vilier`, `duplexchat`,
+và `cholimex`. Các model runtime được tách môi trường để stack Sortformer/NeMo
+không xung đột stack DuplexChat/Cholimex.
+
+## Cài môi trường
+
+```bash
+uv sync --project pipeline/vilier
+uv sync --project pipeline/duplexchat
+uv sync --project pipeline/cholimex
+```
+
+Vilier có thêm Sortformer/NeMo; sau khi cập nhật dependency, chạy `uv lock
+--project pipeline/vilier` trên máy có quyền truy cập PyPI trước khi dùng
+`--locked` trong automation.
+
+## Lệnh chung
+
+```bash
+uv run python single.py --pipeline vilier --input input.wav --debug
+uv run python end2end.py --pipeline all --data otospeech --max_gb 1
+```
+
+`end2end.py` chuẩn bị mỗi OtoSpeech mixture/ground-truth đúng một lần, sau đó
+gửi mixture cho worker từng pipeline và benchmark trên giao sample thành công.
+Vilier luôn dùng Sortformer `nvidia/diar_sortformer_4spk-v1` và overlap-only
+SepReformer `SepReformer_Base_WSJ0`; không có cờ thay model.
+
+---
+
+# Baseline DuplexChat documentation
 
 DuplexChat là pipeline tạo dữ liệu hội thoại full-duplex hai người nói từ audio
 thực tế. Pipeline thu thập nguồn audio, chuẩn hóa âm thanh, diarization để biết

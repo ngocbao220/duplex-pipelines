@@ -177,7 +177,7 @@ def test_launch_scopes_uv_environment(monkeypatch, tmp_path):
         return 0
     monkeypatch.setattr(runner, 'stream_process', launch)
     assert runner.launch_pipeline('vilier', {'pipeline': 'vilier'}, tmp_path) == 0
-    assert seen['env']['UV_PROJECT_ENVIRONMENT'] == str(runner.ROOT / 'pipelines/vilier/.venv')
+    assert seen['env']['UV_PROJECT_ENVIRONMENT'] == str(runner.ROOT / 'pipeline/vilier/.venv')
     assert 'VIRTUAL_ENV' not in seen['env']
     assert seen['env']['MPLBACKEND'] == 'Agg'
     assert '--locked' in seen['command']

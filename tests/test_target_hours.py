@@ -74,16 +74,25 @@ def test_end2end_sets_youtube_only_when_flag_is_passed(monkeypatch):
     assert seen["phase"] == "end2end"
 
 
-def test_end2end_otospeech_defaults_to_duplexchat_on_duplex_chat_branch(monkeypatch):
+def test_end2end_accepts_new_otospeech_pipeline_contract(monkeypatch):
     import pytest
     seen = {}
     monkeypatch.setattr(end2end, "load_config", lambda path: Config())
     monkeypatch.setattr(end2end, "_run_otospeech", lambda cfg, args: seen.update(pipeline=args.pipeline, size=args.max_gb) or 0)
-    monkeypatch.setattr("sys.argv", ["end2end.py", "--data", "oto-speech", "--max_gb", "1"])
+    monkeypatch.setattr("sys.argv", ["end2end.py", "--pipeline", "duplexchat", "--data", "otospeech", "--max_gb", "1"])
     with pytest.raises(SystemExit) as result:
         end2end.main()
     assert result.value.code == 0
     assert seen == {"pipeline": "duplexchat", "size": 1}
+
+
+def test_end2end_rejects_legacy_otospeech_spelling(monkeypatch):
+    import pytest
+
+    monkeypatch.setattr("sys.argv", ["end2end.py", "--pipeline", "vilier", "--data", "oto-speech"])
+    with pytest.raises(SystemExit) as result:
+        end2end.main()
+    assert result.value.code == 2
 
 
 def test_end2end_rejects_pipeline_for_crawl(monkeypatch):

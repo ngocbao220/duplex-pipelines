@@ -22,7 +22,7 @@ def phase(title):
 
 def code_identity(name):
     digest = hashlib.sha256()
-    locations = [ROOT / 'comparison', ROOT / 'pipelines' / name]
+    locations = [ROOT / 'comparison', ROOT / 'pipeline' / name]
     if name != 'vilier':
         locations.append(ROOT / 'src')
     for location in locations:
@@ -104,14 +104,14 @@ def pipeline_config(name, args, cfg):
 def launch_pipeline(name, request, run_dir):
     request_path = run_dir / name / 'request.json'
     write_json(request_path, request)
-    project = ROOT / 'pipelines' / name
+    project = ROOT / 'pipeline' / name
     env = dict(os.environ)
     # Never let an activated parent venv or uv project override collapse the isolated environments.
     env.pop('VIRTUAL_ENV', None)
     env['UV_PROJECT_ENVIRONMENT'] = str(project / '.venv')
     env['UV_CACHE_DIR'] = str(ROOT / '.uv-cache')
     env.pop('PYTHONPATH', None)
-    command = ['uv', 'run', '--project', str(project), '--locked', '--no-dev',
+    command = ['uv', 'run', '--project', str(project), '--no-dev',
                'python', str(ROOT / 'comparison/worker.py'), '--request', str(request_path)]
     try:
         return stream_process(command, project, run_dir / name / 'worker.log', env)

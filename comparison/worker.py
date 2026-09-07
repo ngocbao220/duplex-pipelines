@@ -47,7 +47,7 @@ def duplexchat(source, output, config):
 
 
 def vilier(source, output, config):
-    sys.path.insert(0, str(ROOT / 'pipelines/vilier'))
+    sys.path.insert(0, str(ROOT / 'pipeline/vilier'))
     from pipeline import cli
     from comparison.clearvoice import IsolatedClearVoice
     original_loader = cli.load_overlap_separator
@@ -108,7 +108,7 @@ def main():
     args = parser.parse_args()
     if args.check_imports:
         if args.check_imports == 'vilier':
-            sys.path.insert(0, str(ROOT / 'pipelines/vilier'))
+            sys.path.insert(0, str(ROOT / 'pipeline/vilier'))
             from pipeline import cli
         else:
             from duplexchat_pipe import single_audio, cholimex
