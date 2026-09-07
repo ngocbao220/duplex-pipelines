@@ -12,10 +12,10 @@ from duplexchat_pipe import audio, outputs, separate
 from duplexchat_pipe.config import Config
 from duplexchat_pipe.devices import resolve_device
 
-from .reconstruction import reconstruct_tracks
-from .region_classifier import classify_regions
+from .reconstruct import reconstruct_tracks
+from .regions import classify_regions
 from .speaker_assignment import SpeechBrainEmbeddingExtractor, build_reference_embeddings
-from .vad_masking import run_silero_vad, write_vad_artifacts
+from .masking import run_silero_vad, write_vad_artifacts
 
 
 LOGGER = logging.getLogger(__name__)

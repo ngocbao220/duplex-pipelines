@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -12,12 +11,12 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parents[1]
 sys.path = [entry for entry in sys.path if Path(entry).resolve() != Path(__file__).resolve().parent]
 sys.path.insert(0, str(ROOT))
-from comparison.contract import run_sample, vilier_tracks, write_json
+from comparison.contract import run_sample, write_json
 
 
 def cholimex(source, output, config):
     from duplexchat_pipe.config import Config, PATH_FIELDS
-    from duplexchat_pipe.cholimex import run_cholimex_file
+    from pipeline.cholimex.pipeline.runner import run_cholimex_file
     from duplexchat_pipe.devices import resolve_device
     config = dict(config)
     debug = bool(config.pop('debug', False))
@@ -25,13 +24,14 @@ def cholimex(source, output, config):
                     for key, value in config.items()})
     result = run_cholimex_file(source, output, cfg)
     if not debug:
+        import shutil
         shutil.rmtree(output / 'debug', ignore_errors=True)
     return [output / 'speaker_0.wav', output / 'speaker_1.wav'], {
         'device': resolve_device(cfg.runtime_device, cfg.allow_cpu_fallback), 'pipeline_result': result}
 
 
 def duplexchat(source, output, config):
-    from duplexchat_pipe.single_audio import run_single_audio
+    from pipeline.duplexchat.pipeline.runner import run_single_audio
     from duplexchat_pipe.devices import resolve_device
     config = dict(config)
     debug = bool(config.pop('debug', False))
@@ -39,8 +39,10 @@ def duplexchat(source, output, config):
     run_single_audio(str(source), output_prefix=str(output / 'speaker'),
                      output_dir=str(phase_dir), **config)
     if debug:
+        import shutil
         shutil.move(str(phase_dir), str(output / 'debug'))
     else:
+        import shutil
         shutil.rmtree(phase_dir)
     return [output / 'speakerA.wav', output / 'speakerB.wav'], {
         'device': resolve_device(config.get('runtime_device', 'auto'))}
@@ -48,33 +50,8 @@ def duplexchat(source, output, config):
 
 def vilier(source, output, config):
     sys.path.insert(0, str(ROOT / 'pipeline/vilier'))
-    from pipeline import cli
-    from comparison.clearvoice import IsolatedClearVoice
-    original_loader = cli.load_overlap_separator
-    helpers = []
-
-    def strict_loader(options, dry_run=False, warnings=None):
-        if options.get('enabled') and options.get('backend') in {'clearvoice', 'mossformer2'}:
-            helper = IsolatedClearVoice(options.get('model_name', 'alibabasglab/MossFormer2_SS_16K'), options.get('device', 'auto'))
-            helpers.append(helper)
-            return helper
-        separator = original_loader(options, dry_run=dry_run, warnings=warnings)
-        if options.get('enabled') and separator is None:
-            raise RuntimeError('Vilier separation failed to load: ' + '; '.join(warnings or []))
-        return separator
-
-    cli.load_overlap_separator = strict_loader
-    try:
-        manifest, _ = cli.process_one(source, config, output / 'native', output / 'state',
-                                      dry_run=False, until='pre_asr')
-        native = json.loads(manifest.read_text())
-        config_path = manifest.parent / 'run_config.json'
-        devices = json.loads(config_path.read_text()) if config_path.exists() else native.get('run_config')
-        return vilier_tracks(manifest), {'native_manifest': str(manifest), 'run_config': devices}
-    finally:
-        cli.load_overlap_separator = original_loader
-        for helper in helpers:
-            helper.close()
+    from pipeline.runner import run
+    return run(source, output, config)
 
 
 
