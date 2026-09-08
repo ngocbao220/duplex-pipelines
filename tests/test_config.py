@@ -22,6 +22,7 @@ def test_shared_config_contains_only_integrated_runtime_settings(tmp_path):
     assert config.runtime_device == "cpu"
     assert config.separation_num_steps == 8
     assert config.cholimex_overlap_padding == 0.2
+    assert config.cholimex_speaker_assignment_mode == "relative_similarity"
 
 
 def test_shared_config_rejects_removed_crawler_settings(tmp_path):

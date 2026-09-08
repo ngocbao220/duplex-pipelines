@@ -24,8 +24,9 @@ def reconstruct_tracks(
     references: dict[int, torch.Tensor],
     extractor: EmbeddingExtractor | None,
     cosine_threshold: float,
+    assignment_mode: str,
     overlap_padding: float,
-    debug_callback: Callable[[dict, torch.Tensor, torch.Tensor, torch.Tensor, int], None] | None = None,
+    debug_callback: Callable[[dict, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int], None] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, list[dict]]:
     total = original.shape[-1]
     final = torch.zeros(2, total, dtype=original.dtype)
@@ -68,6 +69,7 @@ def reconstruct_tracks(
             references,
             extractor,
             cosine_threshold,
+            assignment_mode,
         )
         final[0, start:end] = assigned[0].reshape(-1)[:length]
         final[1, start:end] = assigned[1].reshape(-1)[:length]
@@ -79,7 +81,7 @@ def reconstruct_tracks(
             "assignment": assignment,
         }
         if debug_callback is not None:
-            debug_callback(record, original[:, start:end], assigned[0], assigned[1], sample_rate)
+            debug_callback(record, original[:, start:end], cand_0, cand_1, assigned[0], assigned[1], sample_rate)
         overlap_records.append(record)
     return final[0:1], final[1:2], overlap_records
 

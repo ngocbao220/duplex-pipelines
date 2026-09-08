@@ -82,31 +82,36 @@ def assign_candidates(
     references: dict[int, torch.Tensor],
     extractor: EmbeddingExtractor | None,
     threshold: float,
+    mode: str = "relative_similarity",
 ) -> tuple[dict[int, torch.Tensor], dict]:
     if extractor is None or set(references) != {0, 1}:
         raise RuntimeError("Cholimex overlap reconstruction requires embedding references for both speakers")
+    if mode not in {"relative_similarity", "strict_threshold"}:
+        raise ValueError("Cholimex speaker_assignment_mode must be relative_similarity or strict_threshold")
 
     emb_0 = extractor.extract(candidate_0, sample_rate)
     emb_1 = extractor.extract(candidate_1, sample_rate)
 
-    direct = _score(emb_0, references[0]) + _score(emb_1, references[1])
-    swapped = _score(emb_0, references[1]) + _score(emb_1, references[0])
-    best = max(direct, swapped) / 2.0
-    if best < threshold:
+    scores = {
+        "candidate_0": {"speaker_0": _score(emb_0, references[0]), "speaker_1": _score(emb_0, references[1])},
+        "candidate_1": {"speaker_0": _score(emb_1, references[0]), "speaker_1": _score(emb_1, references[1])},
+    }
+    direct = (scores["candidate_0"]["speaker_0"] + scores["candidate_1"]["speaker_1"]) / 2.0
+    swapped = (scores["candidate_0"]["speaker_1"] + scores["candidate_1"]["speaker_0"]) / 2.0
+    best = max(direct, swapped)
+    if mode == "strict_threshold" and best < threshold:
         raise RuntimeError(
             f"Cholimex overlap source assignment confidence {best:.3f} is below threshold {threshold:.3f}"
         )
-    if swapped > direct:
-        return {0: candidate_1, 1: candidate_0}, {
-            "method": "cosine", "swapped": True, "score": best,
-            "direct_score": direct / 2.0, "swapped_score": swapped / 2.0,
-            "mapping": {"candidate_0": 1, "candidate_1": 0},
-        }
-    return {0: candidate_0, 1: candidate_1}, {
-        "method": "cosine", "swapped": False, "score": best,
-        "direct_score": direct / 2.0, "swapped_score": swapped / 2.0,
-        "mapping": {"candidate_0": 0, "candidate_1": 1},
+    details = {
+        "method": "relative_cosine", "mode": mode, "score": best,
+        "direct_score": direct, "swapped_score": swapped,
+        "margin": abs(direct - swapped), "candidate_scores": scores,
+        "threshold": threshold if mode == "strict_threshold" else None,
     }
+    if swapped > direct:
+        return {0: candidate_1, 1: candidate_0}, {**details, "swapped": True, "mapping": {"candidate_0": 1, "candidate_1": 0}}
+    return {0: candidate_0, 1: candidate_1}, {**details, "swapped": False, "mapping": {"candidate_0": 0, "candidate_1": 1}}
 
 
 def _score(left: torch.Tensor, right: torch.Tensor) -> float:

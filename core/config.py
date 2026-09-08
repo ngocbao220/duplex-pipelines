@@ -19,6 +19,7 @@ class Config:
     cholimex_vad_offset: float | None = None
     cholimex_merge_gap: float = 0.0
     cholimex_min_reference_duration: float = 2.0
+    cholimex_speaker_assignment_mode: str = "relative_similarity"
     cholimex_cosine_similarity_threshold: float = 0.5
     cholimex_overlap_padding: float = 0.10
     cholimex_proposal_backend: str = "dialoguesidon"
@@ -40,6 +41,7 @@ FIELD_ALIASES = {
     "cholimex.vad_offset": "cholimex_vad_offset",
     "cholimex.merge_gap": "cholimex_merge_gap",
     "cholimex.min_reference_duration": "cholimex_min_reference_duration",
+    "cholimex.speaker_assignment_mode": "cholimex_speaker_assignment_mode",
     "cholimex.cosine_similarity_threshold": "cholimex_cosine_similarity_threshold",
     "cholimex.overlap_padding": "cholimex_overlap_padding",
     "cholimex.proposal_backend": "cholimex_proposal_backend",

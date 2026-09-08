@@ -44,6 +44,12 @@ debug separation, còn `--scale true` theo flow gốc: chỉ tách từng hội 
 speaker tại `conversations/conversation_00000/`; mode này không tạo full-duration
 `speakerA.wav`/`speakerB.wav` và không nhận ground truth full-input hoặc OtoSpeech.
 
+Cholimex mặc định `cholimex.speaker_assignment_mode=relative_similarity`: chọn
+mapping candidate-to-speaker có cosine tương đối cao hơn, như Vilier. Đặt
+`strict_threshold` để giữ quality gate cũ theo
+`cholimex.cosine_similarity_threshold`; overlap debug ghi candidate, track đã
+gán, score matrix và margin để audit.
+
 Vilier cố định Silero VAD, Sortformer `nvidia/diar_sortformer_4spk-v1`,
 overlap-only SepReformer `SepReformer_Base_WSJ0`, concat và cosine matching.
 Không có cờ đổi model Vilier.

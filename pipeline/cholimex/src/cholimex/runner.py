@@ -96,6 +96,7 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
     overlap_regions = [region for region in regions if region.type in {"overlap", "overlap_backchannel"}]
     embedder = None
     references = {}
+    reference_audio = {}
     if overlap_regions:
         LOGGER.info("Step 4: Speaker references and overlap separation")
         embedder = SpeechBrainEmbeddingExtractor(cfg.cholimex_speaker_embedding_model, device=device)
@@ -106,7 +107,7 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
             embedder,
             cfg.cholimex_min_reference_duration,
         )
-        _write_reference_audio(debug_dir, original, sample_rate, regions, cfg.cholimex_min_reference_duration)
+        reference_audio = _write_reference_audio(debug_dir, original, sample_rate, regions, cfg.cholimex_min_reference_duration)
 
     overlap_models = proposal_models
     if (
@@ -131,20 +132,28 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
             progress_callback=_make_progress(f"cholimex overlap {input_path.stem}"),
         )
 
-    def _write_overlap_debug(record: dict, mixture: torch.Tensor, speaker_0: torch.Tensor,
-                             speaker_1: torch.Tensor, sr: int) -> None:
+    def _write_overlap_debug(record: dict, mixture: torch.Tensor, candidate_0: torch.Tensor,
+                             candidate_1: torch.Tensor, speaker_0: torch.Tensor, speaker_1: torch.Tensor, sr: int) -> None:
         directory = debug_dir / "overlaps" / record["id"]
         directory.mkdir(parents=True, exist_ok=True)
         outputs.save_wav(directory / "mixture.wav", mixture, sr)
+        outputs.save_wav(directory / "candidate_0.wav", candidate_0, sr)
+        outputs.save_wav(directory / "candidate_1.wav", candidate_1, sr)
         outputs.save_wav(directory / "speakerA.wav", speaker_0, sr)
         outputs.save_wav(directory / "speakerB.wav", speaker_1, sr)
+        record["reference_audio"] = reference_audio
         outputs.write_json(directory / "metadata.json", record)
+        assignment = record["assignment"]
+        LOGGER.info("Overlap %s assignment mode=%s mapping=%s direct=%.3f swapped=%.3f margin=%.3f",
+                    record["id"], assignment["mode"], assignment["mapping"], assignment["direct_score"],
+                    assignment["swapped_score"], assignment["margin"])
 
     with StepTimer(LOGGER, "Step 5: Reconstruction", duration_sec=duration_sec,
                    details=f"overlap_regions={len(overlap_regions)}"):
         final_0, final_1, overlap_records = reconstruct_tracks(
             original, sample_rate, regions, _separator if overlap_regions else None, references, embedder,
-            cfg.cholimex_cosine_similarity_threshold, cfg.cholimex_overlap_padding,
+            cfg.cholimex_cosine_similarity_threshold, cfg.cholimex_speaker_assignment_mode,
+            cfg.cholimex_overlap_padding,
             debug_callback=_write_overlap_debug if overlap_regions else None)
     outputs.write_json(debug_dir / "overlaps.json", overlap_records)
     outputs.save_wav(output_dir / "speaker_0.wav", final_0, sample_rate)
@@ -177,6 +186,11 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
             },
             "speaker_embedding": cfg.cholimex_speaker_embedding_model,
         },
+        "speaker_assignment": {
+            "mode": cfg.cholimex_speaker_assignment_mode,
+            "cosine_similarity_threshold": cfg.cholimex_cosine_similarity_threshold
+            if cfg.cholimex_speaker_assignment_mode == "strict_threshold" else None,
+        },
         "debug_dir": str(debug_dir),
     }
     (output_dir / "run.json").write_text(
@@ -192,7 +206,8 @@ def _write_reference_audio(
     sample_rate: int,
     regions: list,
     min_reference_duration: float,
-) -> None:
+) -> dict[str, str]:
+    paths = {}
     for speaker in [0, 1]:
         parts = []
         for region in regions:
@@ -201,7 +216,10 @@ def _write_reference_audio(
                 end = int(round(region.end * sample_rate))
                 parts.append(original[:, start:end])
         if parts:
-            outputs.save_wav(debug_dir / f"speaker_reference_{speaker}.wav", torch.cat(parts, dim=-1), sample_rate)
+            path = debug_dir / f"speaker_reference_{speaker}.wav"
+            outputs.save_wav(path, torch.cat(parts, dim=-1), sample_rate)
+            paths[f"speaker_{speaker}"] = str(path)
+    return paths
 
 
 def _align_proposal_track(
