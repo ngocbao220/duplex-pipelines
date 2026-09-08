@@ -49,6 +49,22 @@ import numpy as np
 import librosa
 from pyannote.audio import Pipeline, Inference
 import pandas as pd
+
+
+def _patch_speechbrain_legacy_auth_keyword() -> None:
+    """Allow pyannote 3.3 to call SpeechBrain 1.x with its legacy keyword."""
+    from speechbrain.inference.interfaces import Pretrained
+
+    original_init = Pretrained.__init__
+
+    def compatible_init(self, *args, **kwargs):
+        kwargs.pop("use_auth_token", None)
+        return original_init(self, *args, **kwargs)
+
+    Pretrained.__init__ = compatible_init
+
+
+_patch_speechbrain_legacy_auth_keyword()
 #from prompt import DIAR_PROMPT, WEAK_DIAR_PROMPT, NEW_DIAR_PROMPT, SPK_SUMMERIZE_PROMPT, NEW_DIAR_PROMPT_with_spk_inform, DIAR_PROMPT_KO
 from utils.tool import (
     export_to_mp3,

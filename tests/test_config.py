@@ -58,10 +58,12 @@ def test_sommelier_runtime_pins_hub_version_that_accepts_use_auth_token():
     assert "huggingface-hub==0.33.4" in set(config["project"]["dependencies"])
 
 
-def test_sommelier_runtime_pins_speechbrain_before_the_token_api_change():
+def test_sommelier_runtime_pins_upstream_speechbrain_and_adapts_legacy_keyword():
     root = Path(__file__).resolve().parents[1]
     config = tomllib.loads((root / "pipeline" / "sommelier" / "pyproject.toml").read_text())
-    assert "speechbrain==0.5.16" in set(config["project"]["dependencies"])
+    assert "speechbrain==1.0.3" in set(config["project"]["dependencies"])
+    source = (root / "pipeline" / "sommelier" / "vendor" / "podcast_pipeline" / "main_original_ASR_MoE.py").read_text()
+    assert 'kwargs.pop("use_auth_token", None)' in source
 
 
 def test_sommelier_defers_salm_import_when_asr_moe_is_disabled():
