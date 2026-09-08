@@ -67,7 +67,6 @@ from panns_inference import AudioTagging
 import soundfile as sf
 
 from nemo.collections.asr.models import SortformerEncLabelModel
-from nemo.collections.speechlm2.models import SALM
 
 import json
 import re
@@ -3095,6 +3094,7 @@ if __name__ == "__main__":
             )
     if args.ASRMoE:
         import nemo.collections.asr as nemo_asr
+        from nemo.collections.speechlm2.models import SALM
         asr_model_2 = nemo_asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-tdt-0.6b-v2")
 
         # Load Canary model
