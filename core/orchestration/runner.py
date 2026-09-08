@@ -90,7 +90,7 @@ def pipeline_config(name, args, cfg):
         config = json.loads(json.dumps(asdict(cfg), default=str))
         config['debug'] = bool(args.debug)
         return config
-    path = args.vilier_config if name == 'vilier' else args.duplexchat_config
+    path = args.vilier_config if name == 'vilier' else ROOT / 'configs/sommelier.json' if name == 'sommelier' else args.duplexchat_config
     config = json.loads(path.read_text())
     if name == 'vilier':
         config.setdefault('asr', {})['enabled'] = False

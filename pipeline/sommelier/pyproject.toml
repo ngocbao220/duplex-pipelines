@@ -1,0 +1,19 @@
+[project]
+name = "sommelier-runtime"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "duplex-pipelines", "numpy", "soundfile", "pydub", "librosa",
+  "torch", "torchaudio", "pyannote.audio==3.3.2", "speechbrain",
+  "nemo_toolkit[asr]", "panns-inference", "loguru", "tqdm",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+duplex-pipelines = { path = "../..", editable = true }
