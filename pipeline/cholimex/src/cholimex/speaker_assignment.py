@@ -84,7 +84,7 @@ def assign_candidates(
     threshold: float,
 ) -> tuple[dict[int, torch.Tensor], dict]:
     if extractor is None or set(references) != {0, 1}:
-        return {0: candidate_0, 1: candidate_1}, {"method": "channel_order", "reason": "missing_reference"}
+        raise RuntimeError("Cholimex overlap reconstruction requires embedding references for both speakers")
 
     emb_0 = extractor.extract(candidate_0, sample_rate)
     emb_1 = extractor.extract(candidate_1, sample_rate)
@@ -93,13 +93,20 @@ def assign_candidates(
     swapped = _score(emb_0, references[1]) + _score(emb_1, references[0])
     best = max(direct, swapped) / 2.0
     if best < threshold:
-        return {
-            0: candidate_0,
-            1: candidate_1,
-        }, {"method": "channel_order", "reason": "below_threshold", "score": best}
+        raise RuntimeError(
+            f"Cholimex overlap source assignment confidence {best:.3f} is below threshold {threshold:.3f}"
+        )
     if swapped > direct:
-        return {0: candidate_1, 1: candidate_0}, {"method": "cosine", "swapped": True, "score": best}
-    return {0: candidate_0, 1: candidate_1}, {"method": "cosine", "swapped": False, "score": best}
+        return {0: candidate_1, 1: candidate_0}, {
+            "method": "cosine", "swapped": True, "score": best,
+            "direct_score": direct / 2.0, "swapped_score": swapped / 2.0,
+            "mapping": {"candidate_0": 1, "candidate_1": 0},
+        }
+    return {0: candidate_0, 1: candidate_1}, {
+        "method": "cosine", "swapped": False, "score": best,
+        "direct_score": direct / 2.0, "swapped_score": swapped / 2.0,
+        "mapping": {"candidate_0": 0, "candidate_1": 1},
+    }
 
 
 def _score(left: torch.Tensor, right: torch.Tensor) -> float:

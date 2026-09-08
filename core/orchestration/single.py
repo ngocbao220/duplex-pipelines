@@ -10,15 +10,18 @@ from .runner import ROOT, code_identity, launch_pipeline, pipeline_config
 from .contract import write_json
 
 
-def run_single(name: str, source: Path, output: Path, debug: bool, gt_a: Path | None, gt_b: Path | None) -> int:
+def run_single(name: str, source: Path, output: Path, debug: bool, gt_a: Path | None, gt_b: Path | None,
+               scale: bool = False) -> int:
     """Run one adapter without ever passing reference audio to its worker."""
     from core.config import load_config
     from core import benchmark
 
     if bool(gt_a) != bool(gt_b):
         raise ValueError("--gt-speaker-a and --gt-speaker-b must be provided together")
+    if name == "duplexchat" and scale and gt_a:
+        raise ValueError("DuplexChat --scale true produces conversation collections and cannot use full-input ground truth")
     cfg = load_config(ROOT / "configs/config.json")
-    args = SimpleNamespace(debug=debug, vilier_config=ROOT / "configs/vilier.json",
+    args = SimpleNamespace(debug=debug, scale=scale, vilier_config=ROOT / "configs/vilier.json",
                            duplexchat_config=ROOT / "configs/duplexchat.json", sample_rate=16000)
     run_dir = output.parent / ".runs" / uuid.uuid4().hex
     result_path = run_dir / "results.json"
@@ -33,6 +36,12 @@ def run_single(name: str, source: Path, output: Path, debug: bool, gt_a: Path | 
               f"-> run.json: {output / 'run.json'}\n"
               f"-> worker log: {run_dir / name / 'worker.log'}", flush=True)
         return exit_code or 1
+    if scale:
+        manifest = json.loads((output / "run.json").read_text())
+        conversations = manifest["metadata"].get("conversations", [])
+        print(f"Done\n-> conversations: {output / 'conversations'} ({len(conversations)} valid two-speaker conversations)\n"
+              f"-> run.json: {output / 'run.json'}", flush=True)
+        return exit_code
     report = output / "benchmark.json"
     if gt_a and gt_b:
         score = benchmark.score_reference_sample({"key": output.name, "gt_speaker_1": str(gt_a), "gt_speaker_2": str(gt_b)}, output.parent, 16000, -40.0, -20.0)

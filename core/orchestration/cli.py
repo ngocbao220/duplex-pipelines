@@ -16,6 +16,9 @@ def build_pipeline_parser(name: str) -> argparse.ArgumentParser:
     single.add_argument("--input", type=Path, required=True)
     single.add_argument("--output-dir", type=Path, required=True)
     single.add_argument("--debug", action="store_true")
+    if name == "duplexchat":
+        single.add_argument("--scale", choices=("true", "false"), default="false",
+                            help="true: separate each valid two-speaker conversation; false: debug full-input separation")
     single.add_argument("--gt-speaker-a", type=Path)
     single.add_argument("--gt-speaker-b", type=Path)
 
@@ -43,8 +46,9 @@ def run_pipeline_command(name: str, argv: list[str] | None = None) -> int:
                 raise SystemExit(f"Ground-truth audio file does not exist: {reference}")
         from .single import run_single
         return run_single(name, args.input.resolve(), args.output_dir.resolve(), args.debug,
-                          args.gt_speaker_a.resolve() if args.gt_speaker_a else None,
-                          args.gt_speaker_b.resolve() if args.gt_speaker_b else None)
+                           args.gt_speaker_a.resolve() if args.gt_speaker_a else None,
+                          args.gt_speaker_b.resolve() if args.gt_speaker_b else None,
+                          scale=getattr(args, "scale", "false") == "true")
 
     from types import SimpleNamespace
     from core import benchmark

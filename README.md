@@ -23,6 +23,8 @@ truy cập PyPI trước khi dùng lockfile trong automation.
 uv run --project pipeline/vilier python -m vilier single --input input.wav --output-dir outputs/vilier --debug
 uv run --project pipeline/sommelier python -m sommelier single --input input.wav --output-dir outputs/sommelier --debug
 uv run --project pipeline/cholimex python -m cholimex single --input input.wav --output-dir outputs/cholimex --gt-speaker-a gt_a.wav --gt-speaker-b gt_b.wav
+uv run --project pipeline/duplexchat python -m duplexchat single --input input.wav --output-dir outputs/duplexchat --scale false --debug
+uv run --project pipeline/duplexchat python -m duplexchat single --input input.wav --output-dir outputs/duplexchat-scale --scale true --debug
 uv run --project pipeline/duplexchat python -m duplexchat otospeech --max-gb 1 --max-samples 1 --max-seconds 60
 uv run --project . python cli.py compare-otospeech --max-gb 1 --max-samples 1 --max-seconds 60
 ```
@@ -32,6 +34,15 @@ benchmark reference-free với metric reference là `null`; đủ hai GT sẽ gh
 reference benchmark. `compare-otospeech` tải/chuẩn bị mỗi mixture một lần,
 worker chỉ nhận mixture, rồi benchmark từng pipeline
 và bảng tổng trên giao các sample hợp lệ.
+
+Log console của worker dùng cùng format màu với Sommelier: `timestamp - pipeline
+- [INFO] - ...`; `worker.log` giữ bản không ANSI và chứa cả noise từ thư viện.
+Khi `--debug`, Vilier và Cholimex ghi overlap đã được gán speaker tại
+`debug/overlaps.json` và `debug/overlaps/overlap_00000/{metadata.json,mixture.wav,speakerA.wav,speakerB.wav}`.
+DuplexChat ghi `debug/conversations_2spk.json`. `--scale false` là full-input
+debug separation, còn `--scale true` theo flow gốc: chỉ tách từng hội thoại hai
+speaker tại `conversations/conversation_00000/`; mode này không tạo full-duration
+`speakerA.wav`/`speakerB.wav` và không nhận ground truth full-input hoặc OtoSpeech.
 
 Vilier cố định Silero VAD, Sortformer `nvidia/diar_sortformer_4spk-v1`,
 overlap-only SepReformer `SepReformer_Base_WSJ0`, concat và cosine matching.

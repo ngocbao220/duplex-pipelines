@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import soundfile as sf
 
-from core.orchestration.contract import run_sample, validate_tracks
+from core.orchestration.contract import run_sample, validate_conversation_collection, validate_tracks
 from core.orchestration.process import stream_process
 from core.orchestration.report import comparison_report
 
@@ -28,6 +28,40 @@ def test_core_contract_requires_two_full_tracks(tmp_path):
         raise AssertionError("short track must fail validation")
 
 
+def test_conversation_collection_requires_two_timeline_aligned_tracks_per_dialogue(tmp_path):
+    mixture = _wav(tmp_path / "conversation" / "mixture.wav", frames=3200)
+    first = _wav(tmp_path / "conversation" / "speakerA.wav", frames=3200)
+    second = _wav(tmp_path / "conversation" / "speakerB.wav", frames=3200)
+    collection = [{"mixture": str(mixture), "tracks": [str(first), str(second)]}]
+
+    assert validate_conversation_collection(collection) == 0.2
+    _wav(second, frames=1600)
+    try:
+        validate_conversation_collection(collection)
+    except ValueError as error:
+        assert "timeline" in str(error)
+    else:
+        raise AssertionError("short conversation track must fail validation")
+
+
+def test_collection_run_does_not_create_invalid_full_input_tracks(tmp_path):
+    source = _wav(tmp_path / "source.wav")
+
+    def collection_adapter(_source, output, _config):
+        mixture = _wav(output / "conversations" / "conversation_00000" / "mixture.wav")
+        first = _wav(output / "conversations" / "conversation_00000" / "speakerA.wav")
+        second = _wav(output / "conversations" / "conversation_00000" / "speakerB.wav")
+        return [], {"output_kind": "conversation_collection", "conversations": [
+            {"mixture": str(mixture), "tracks": [str(first), str(second)]}
+        ]}
+
+    result = run_sample("duplexchat", {"key": "sample", "mixture": str(source)}, tmp_path / "output", {}, "code", collection_adapter)
+
+    assert result["status"] == "complete"
+    assert result["track_sha256"] == []
+    assert not (tmp_path / "output" / "speakerA.wav").exists()
+
+
 def test_core_report_uses_only_common_successes(tmp_path):
     rows = {"vilier": [{"key": "a", "status": "ok", "all": {"pit_si_sdr": 1.0}}],
             "cholimex": [{"key": "a", "status": "ok", "all": {"pit_si_sdr": 2.0}}]}
@@ -48,7 +82,7 @@ def test_failed_sample_emits_one_concise_console_error_and_persists_traceback(tm
     captured = capsys.readouterr().out
     assert result["status"] == "failed"
     assert "FileNotFoundError: checkpoint missing" in result["traceback"]
-    assert "[vilier] FAILED sample" in captured
+    assert " - vilier - [ERROR] - Sample sample failed: FileNotFoundError: checkpoint missing" in captured
     assert "Traceback" not in captured
 
 

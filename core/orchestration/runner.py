@@ -98,6 +98,8 @@ def pipeline_config(name, args, cfg):
         config.setdefault('runtime', {})['dry_run'] = False
         config.setdefault('entrypoint', {})['sample_rate'] = args.sample_rate
     config['debug'] = bool(args.debug)
+    if name == 'duplexchat':
+        config['scale'] = bool(getattr(args, 'scale', False))
     return config
 
 

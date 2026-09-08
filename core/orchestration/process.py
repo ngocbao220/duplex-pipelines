@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 from pathlib import Path
 
 
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE.sub("", text)
+
+
 def is_console_noise(line: str) -> bool:
     """Keep known third-party chatter in the worker log, not the progress console."""
-    text = line.strip()
+    text = strip_ansi(line).strip()
     return text.startswith((
         "OneLogger:",
         "No exporters were provided.",
@@ -34,7 +42,7 @@ def stream_process(command: list[str], cwd: Path, log: Path, env: dict | None = 
                               start_new_session=True, bufsize=1) as child:
             try:
                 for line in child.stdout:
-                    handle.write(line)
+                    handle.write(strip_ansi(line))
                     handle.flush()
                     if not is_console_noise(line):
                         print(line, end='', flush=True)

@@ -219,7 +219,8 @@ def run_diarization(
         speech_ts = get_speech_timestamps(waveform[0], vad_model, sampling_rate=sample_rate)
         vad_segments = [(ts["start"]/sample_rate, ts["end"]/sample_rate) for ts in speech_ts]
     except Exception as e:
-        print(f"Warning: Silero VAD failed ({e}), falling back to full audio.")
+        import logging
+        logging.getLogger("duplexchat").warning("Silero VAD failed (%s); falling back to full audio", e)
         vad_segments = [(0.0, dur_sec)]
         
     if not vad_segments:
@@ -262,7 +263,8 @@ def run_diarization(
         try:
             output = pipeline({"waveform": chunk_wav, "sample_rate": sample_rate})
         except Exception as e:
-            print(f"Warning: Diarization failed on chunk {s_pad}-{e_pad}: {e}")
+            import logging
+            logging.getLogger("duplexchat").warning("Diarization failed on chunk %s-%s: %s", s_pad, e_pad, e)
             if progress_callback is not None:
                 progress_callback("advance", 1)
             continue

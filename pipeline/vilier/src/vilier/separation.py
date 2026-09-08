@@ -33,14 +33,19 @@ def apply_overlap_separation(
     pairs = detect_overlapping_pairs(segments, overlap_threshold)
     if not pairs:
         return {"segment_audio": {}, "overlap_regions": []}
+    if speaker_assigner is None:
+        raise RuntimeError(
+            "Vilier overlap reconstruction requires pyannote speaker embeddings for source assignment; "
+            "configure overlap_separation.speaker_embedding_model."
+        )
 
     separated_regions: dict[str, list[dict]] = {segment.id: [] for segment in segments}
     overlap_regions = []
-    reference_embeddings = (
-        speaker_assigner.reference_embeddings(segments, waveform, sample_rate, pairs)
-        if speaker_assigner is not None
-        else {}
-    )
+    reference_embeddings = speaker_assigner.reference_embeddings(segments, waveform, sample_rate, pairs)
+    involved_speakers = {pair["seg1"].speaker for pair in pairs} | {pair["seg2"].speaker for pair in pairs}
+    if not involved_speakers <= set(reference_embeddings):
+        missing = ", ".join(sorted(involved_speakers - set(reference_embeddings)))
+        raise RuntimeError(f"Vilier overlap reconstruction has no non-overlap embedding reference for: {missing}")
     total = len(pairs)
     for pair_idx, pair in enumerate(pairs, start=1):
         if progress_callback is not None:
@@ -56,17 +61,12 @@ def apply_overlap_separation(
         src1, src2 = separator.separate(overlap_audio, sample_rate)
         src1 = _match_length(np.asarray(src1, dtype=np.float32), len(overlap_audio))
         src2 = _match_length(np.asarray(src2, dtype=np.float32), len(overlap_audio))
-        if speaker_assigner is None:
-            seg1_audio, seg2_audio = _assign_sources_by_energy(pair["seg1"], pair["seg2"], src1, src2)
-            seg1_audio = _match_target_rms(seg1_audio, _segment_non_overlap_rms(pair["seg1"], waveform, sample_rate, pairs) or _rms(overlap_audio) * 0.7)
-            seg2_audio = _match_target_rms(seg2_audio, _segment_non_overlap_rms(pair["seg2"], waveform, sample_rate, pairs) or _rms(overlap_audio) * 0.7)
-        else:
-            seg1_audio, seg2_audio = speaker_assigner.assign(
-                pair["seg1"], pair["seg2"], src1, src2, sample_rate, reference_embeddings
-            )
-            # Original Sommelier matches both sources to the overlap mixture.
-            seg1_audio = _match_target_rms(seg1_audio, _rms(overlap_audio))
-            seg2_audio = _match_target_rms(seg2_audio, _rms(overlap_audio))
+        seg1_audio, seg2_audio = speaker_assigner.assign(
+            pair["seg1"], pair["seg2"], src1, src2, sample_rate, reference_embeddings
+        )
+        # Original Sommelier matches both sources to the overlap mixture.
+        seg1_audio = _match_target_rms(seg1_audio, _rms(overlap_audio))
+        seg2_audio = _match_target_rms(seg2_audio, _rms(overlap_audio))
 
         separated_regions[pair["seg1"].id].append({"start": start, "end": end, "audio": seg1_audio})
         separated_regions[pair["seg2"].id].append({"start": start, "end": end, "audio": seg2_audio})
@@ -141,13 +141,10 @@ class PyannoteOverlapAssigner:
     def assign(self, seg1: SpeakerSegment, seg2: SpeakerSegment, src1: np.ndarray, src2: np.ndarray, sample_rate: int, references: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
         embedding = self._embedding(src1, sample_rate)
         candidates = {speaker: references[speaker] for speaker in (seg1.speaker, seg2.speaker) if speaker in references}
-        # Sommelier's short-audio fallback chooses the first diarized speaker.
         if embedding is None:
-            return src1, src2
-        # Its identity routine returns no match when no reference exists; the
-        # caller consequently assigns source one to the second speaker.
+            raise RuntimeError("Vilier overlap source is too short for embedding assignment")
         if not candidates:
-            return src2, src1
+            raise RuntimeError("Vilier overlap source assignment has no speaker reference")
         speaker = max(candidates, key=lambda label: _cosine_similarity(embedding, candidates[label]))
         return (src1, src2) if speaker == seg1.speaker else (src2, src1)
 

@@ -8,6 +8,8 @@ import traceback
 import uuid
 from pathlib import Path
 
+from .logging_style import get_logger
+
 
 def write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,6 +50,28 @@ def validate_tracks(source: Path, tracks: list[Path]) -> float:
     return duration
 
 
+def validate_conversation_collection(conversations: list[dict]) -> float:
+    """Validate DuplexChat's native per-conversation two-track output."""
+    if not conversations:
+        raise ValueError("DuplexChat scale output contains no valid two-speaker conversations")
+    duration = 0.0
+    for conversation in conversations:
+        mixture = Path(conversation["mixture"])
+        tracks = [Path(path) for path in conversation["tracks"]]
+        duration += validate_tracks(mixture, tracks)
+    return duration
+
+
+def _output_kind(metadata: dict) -> str:
+    return str(metadata.get("output_kind", "two_full_tracks"))
+
+
+def validate_output(source: Path, tracks: list[Path], metadata: dict) -> float:
+    if _output_kind(metadata) == "conversation_collection":
+        return validate_conversation_collection(metadata.get("conversations", []))
+    return validate_tracks(source, tracks)
+
+
 def vilier_tracks(manifest: Path) -> list[Path]:
     speakers = json.loads(manifest.read_text())['speakers']
     if len(speakers) != 2:
@@ -60,10 +84,14 @@ def reusable(output: Path, identity: str, source: Path) -> dict | None:
         result = json.loads((output / 'run.json').read_text())
         if result['status'] != 'complete' or result['fingerprint'] != identity:
             return None
-        tracks = [output / name for name in ('speakerA.wav', 'speakerB.wav')]
-        validate_tracks(source, tracks)
-        if result['track_sha256'] != [sha256(path) for path in tracks]:
-            return None
+        metadata = result.get("metadata", {})
+        if _output_kind(metadata) == "conversation_collection":
+            validate_conversation_collection(metadata.get("conversations", []))
+        else:
+            tracks = [output / name for name in ('speakerA.wav', 'speakerB.wav')]
+            validate_tracks(source, tracks)
+            if result['track_sha256'] != [sha256(path) for path in tracks]:
+                return None
         return result
     except (OSError, ValueError, KeyError, RuntimeError):
         return None
@@ -88,19 +116,21 @@ def run_sample(pipeline, sample, output, config, code, adapter, force=False) -> 
         result['fingerprint'] = identity
         write_json(output / 'run.json', result)
         tracks, metadata = adapter(source, output, config)
-        duration = validate_tracks(source, tracks)
+        duration = validate_output(source, tracks, metadata)
         canonical = [output / name for name in ('speakerA.wav', 'speakerB.wav')]
-        for original, target in zip(tracks, canonical):
-            if original.resolve() != target.resolve():
-                shutil.copy2(original, target)
+        if _output_kind(metadata) != "conversation_collection":
+            for original, target in zip(tracks, canonical):
+                if original.resolve() != target.resolve():
+                    shutil.copy2(original, target)
         elapsed = time.perf_counter() - started
         result.update(status='complete', duration_sec=duration, inference_seconds=elapsed,
                       rtf=elapsed / duration, metadata=metadata,
-                      track_sha256=[sha256(path) for path in canonical])
+                      track_sha256=([sha256(path) for path in canonical]
+                                    if _output_kind(metadata) != "conversation_collection" else []))
     except Exception as exc:
         trace = traceback.format_exc()
         result.update(status='failed', error=f'{type(exc).__name__}: {exc}',
                       traceback=trace, inference_seconds=time.perf_counter() - started)
-        print(f"[{pipeline}] FAILED {sample['key']}: {type(exc).__name__}: {exc}", flush=True)
+        get_logger(pipeline).error("Sample %s failed: %s: %s", sample['key'], type(exc).__name__, exc)
     write_json(output / 'run.json', result)
     return result

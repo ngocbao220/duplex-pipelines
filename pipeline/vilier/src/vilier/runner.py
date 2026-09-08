@@ -6,7 +6,9 @@ Outputs: Contract-ready speaker tracks and native Vilier manifest metadata.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
+from core.orchestration.logging_style import StepTimer, get_logger
 
 
 def run(source: Path, output: Path, config: dict):
@@ -16,8 +18,9 @@ def run(source: Path, output: Path, config: dict):
     from core.orchestration.clearvoice import IsolatedClearVoice
     from core.orchestration.contract import vilier_tracks
 
-    print("[vilier] Preflight: validating overlap-separation checkpoint", flush=True)
-    preflight_overlap_separator(config.get("overlap_separation", {}))
+    logger = get_logger("vilier")
+    with StepTimer(logger, "Step 0: SepReformer preflight"):
+        preflight_overlap_separator(config.get("overlap_separation", {}))
 
     original_loader = cli.load_overlap_separator
     helpers = []
@@ -34,8 +37,11 @@ def run(source: Path, output: Path, config: dict):
 
     cli.load_overlap_separator = strict_loader
     try:
-        manifest, _ = cli.process_one(source, config, output / "native", output / "state", dry_run=False, until="pre_asr")
+        manifest, _ = cli.process_one(source, config, output / "native", output / "state", dry_run=False, until="pre_asr",
+                                      progress=cli.StepLogger(logger))
         native = json.loads(manifest.read_text())
+        if config.get("debug"):
+            _export_overlap_debug(manifest.parent, output, native)
         config_path = manifest.parent / "run_config.json"
         devices = json.loads(config_path.read_text()) if config_path.exists() else native.get("run_config")
         return vilier_tracks(manifest), {"native_manifest": str(manifest), "run_config": devices}
@@ -43,3 +49,27 @@ def run(source: Path, output: Path, config: dict):
         cli.load_overlap_separator = original_loader
         for helper in helpers:
             helper.close()
+
+
+def _export_overlap_debug(native_dir: Path, output: Path, manifest: dict) -> None:
+    """Normalize native Vilier overlap clips to the shared debug-artifact contract."""
+    records = list(manifest.get("overlap_separation", {}).get("overlap_regions", []))
+    debug_root = output / "debug"
+    exported = []
+    for record in records:
+        directory = debug_root / "overlaps" / record["id"]
+        directory.mkdir(parents=True, exist_ok=True)
+        source_paths = {"mixture.wav": record.get("mixed_audio", "")}
+        separated = record.get("separated_audio", {})
+        values = list(separated.values())
+        if len(values) == 2:
+            source_paths.update({"speakerA.wav": values[0], "speakerB.wav": values[1]})
+        for name, relative in source_paths.items():
+            if relative:
+                source = native_dir / relative
+                if source.is_file():
+                    shutil.copy2(source, directory / name)
+        (directory / "metadata.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        exported.append(record)
+    (debug_root / "overlaps.json").parent.mkdir(parents=True, exist_ok=True)
+    (debug_root / "overlaps.json").write_text(json.dumps(exported, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

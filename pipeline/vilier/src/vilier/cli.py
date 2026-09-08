@@ -7,12 +7,8 @@ import argparse
 import copy
 import json
 import os
-import sys
-import threading
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import TextIO
 
 from .asr import export_speaker_asr_audio, load_asr_runner, transcribe_asr_segments, write_transcript_json
 from .preprocess import iter_audio_files, load_sommelier_mono, write_wav
@@ -30,9 +26,18 @@ from .music import apply_music_separation, load_music_separator
 from .separation import apply_overlap_separation, load_overlap_separator, load_overlap_speaker_assigner
 from .schema import relative_path
 from .reconstruct import annotate_overlaps, export_audacity_labels, export_segments_and_tracks, write_manifest
-from .tree_log import kv, log_tree, section, write_tree_log
 from .vad import SileroVadRunner, export_vad_audio, write_vad_txt
 from .visualization import write_visualizations
+from core.orchestration.logging_style import get_logger
+
+
+def kv(key: str, value) -> tuple[str, list]:
+    """Keep phase diagnostics structured for errors and manifests, not console trees."""
+    return (f"{key}={value}", [])
+
+
+def section(name: str, status: str, attrs=None) -> tuple[str, list]:
+    return (f"{name} {status}", list(attrs or []))
 
 
 class PipelineRunError(Exception):
@@ -44,116 +49,27 @@ class PipelineRunError(Exception):
         self.original = original
 
 
-class ProgressBar:
-    def __init__(self, total: int, enabled: bool = True, stream: TextIO | None = None):
-        self.total = max(1, total)
-        self.enabled = enabled
-        self.stream = stream or sys.stderr
-        self.completed = 0
-        self.item_bars = {}
+class StepLogger:
+    """Sommelier-style phase logging adapter for the existing process flow."""
+    def __init__(self, logger, duration_sec: float | None = None):
+        self.logger = logger
+        self.duration_sec = duration_sec
+        self.started: dict[tuple[str, str], float] = {}
 
     def start(self, audio_id: str, step: str) -> None:
-        self._write(audio_id, step, "RUN", self.completed)
+        self.started[(audio_id, step)] = time.perf_counter()
+        self.logger.info("Step: %s", step.replace("_", " ").title())
 
     def complete(self, audio_id: str, step: str) -> None:
-        self._close_item_bar(audio_id, step)
-        self.completed = min(self.completed + 1, self.total)
-        self._write(audio_id, step, "DONE", self.completed)
+        elapsed = time.perf_counter() - self.started.pop((audio_id, step), time.perf_counter())
+        rtf = elapsed / self.duration_sec if self.duration_sec else 0.0
+        self.logger.info("%s - Processing time: %.2fs, RT factor: %.4f", step, elapsed, rtf)
 
     def fail(self, audio_id: str, step: str) -> None:
-        self._close_item_bar(audio_id, step)
-        self._write(audio_id, step, "FAIL", self.completed)
+        self.logger.error("%s failed", step)
 
     def item(self, audio_id: str, step: str, current: int, total: int, label: str) -> None:
-        if not self.enabled:
-            return
-        tqdm_cls = _tqdm()
-        if tqdm_cls is not None and total > 0:
-            key = (audio_id, step)
-            bar = self.item_bars.get(key)
-            if bar is None:
-                bar = tqdm_cls(
-                    total=total,
-                    desc=f"{audio_id}/{step}",
-                    unit="it",
-                    leave=False,
-                    file=self.stream,
-                    dynamic_ncols=True,
-                )
-                self.item_bars[key] = bar
-            delta = max(0, current - int(bar.n))
-            if delta:
-                bar.update(delta)
-            if label:
-                bar.set_postfix_str(_short_label(label), refresh=True)
-            return
-        print(f"  {audio_id}/{step}: {current}/{total} {label}", file=self.stream, flush=True)
-
-    def _write(self, audio_id: str, step: str, status: str, done: int) -> None:
-        if not self.enabled:
-            return
-        print(format_progress_bar(done, self.total, f"{audio_id}/{step}", status), file=self.stream, flush=True)
-
-    def _close_item_bar(self, audio_id: str, step: str) -> None:
-        bar = self.item_bars.pop((audio_id, step), None)
-        if bar is not None:
-            bar.close()
-
-
-def _tqdm():
-    try:
-        from tqdm import tqdm
-    except Exception:
         return None
-    return tqdm
-
-
-def _short_label(label: str, max_len: int = 48) -> str:
-    label = str(label)
-    if len(label) <= max_len:
-        return label
-    return "..." + label[-max_len + 3 :]
-
-
-def format_progress_bar(done: int, total: int, label: str, status: str, width: int = 24) -> str:
-    total = max(1, total)
-    done = min(max(0, done), total)
-    filled = round(width * done / total)
-    bar = "#" * filled + "-" * (width - filled)
-    return f"[{bar}] {done}/{total} {status} {label}"
-
-
-def run_with_progress_heartbeat(fn, progress: ProgressBar | None, audio_id: str, step: str, label: str, interval_seconds: float):
-    if progress is None or interval_seconds <= 0:
-        return fn()
-
-    stop = threading.Event()
-    started = time.monotonic()
-
-    def heartbeat() -> None:
-        while not stop.wait(interval_seconds):
-            elapsed = format_elapsed(time.monotonic() - started)
-            progress.item(audio_id, step, 0, 1, f"{label} elapsed={elapsed}")
-
-    thread = threading.Thread(target=heartbeat, daemon=True)
-    thread.start()
-    try:
-        return fn()
-    finally:
-        stop.set()
-        thread.join(timeout=0.2)
-
-
-def format_elapsed(seconds: float) -> str:
-    seconds_int = max(0, int(round(seconds)))
-    minutes, seconds_part = divmod(seconds_int, 60)
-    hours, minutes_part = divmod(minutes, 60)
-    if hours:
-        return f"{hours}h{minutes_part:02d}m{seconds_part:02d}s"
-    if minutes_part:
-        return f"{minutes_part}m{seconds_part:02d}s"
-    return f"{seconds_part}s"
-
 
 def load_config(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as handle:
@@ -194,32 +110,8 @@ def _component_summary(section: dict, enabled: bool, runner=None, model_key: str
     }
 
 
-def resolve_log_dir(config: dict, run_date: str, log_dir_arg: str = "") -> Path:
-    raw_log_dir = log_dir_arg or os.environ.get("LOG_DIR") or config.get("logging", {}).get("log_dir", "logs")
-    log_dir = Path(raw_log_dir).expanduser()
-    if log_dir.name != run_date:
-        log_dir = log_dir / run_date
-    return log_dir.resolve()
-
-
-def log_path_for_audio(log_dir: Path, audio_path: Path) -> Path:
-    return log_dir / audio_path.name / "pipeline.log"
-
-
-def batch_log_path(log_dir: Path) -> Path:
-    return log_dir / "batch.log"
-
-
 def state_dir_for_audio(output_dir: Path, state_dir: Path) -> Path:
     return state_dir if state_dir.is_absolute() else output_dir / state_dir
-
-
-def state_dir_for_batch_log(output_root: Path, state_dir: Path, files: list[Path]) -> Path | str:
-    if state_dir.is_absolute():
-        return state_dir
-    if len(files) == 1:
-        return state_dir_for_audio(output_root / files[0].stem, state_dir)
-    return str(output_root / "<input_stem>" / state_dir)
 
 
 def process_one(
@@ -230,7 +122,7 @@ def process_one(
     dry_run: bool,
     until: str = "",
     from_phase: str = "",
-    progress: ProgressBar | None = None,
+    progress: StepLogger | None = None,
 ) -> tuple[Path, list]:
     if from_phase == "post_asr":
         return process_post_asr(audio_path, config, output_root, state_dir, dry_run=dry_run, progress=progress)
@@ -346,15 +238,7 @@ def process_one(
             running_label = f"running {standardized_path.name} device={diarizer.resolved_device}"
             if progress is not None:
                 progress.item(audio_id, current_step, 0, 1, running_label)
-            heartbeat_seconds = float(config.get("logging", {}).get("heartbeat_seconds", 15.0))
-            segments = run_with_progress_heartbeat(
-                lambda: diarizer.diarize(standardized_path, vad_segments),
-                progress,
-                audio_id,
-                current_step,
-                running_label,
-                heartbeat_seconds,
-            )
+            segments = diarizer.diarize(standardized_path, vad_segments)
             if progress is not None:
                 progress.item(audio_id, current_step, 1, 1, f"{diarization_config.get('backend', 'diarization')} done")
         else:
@@ -476,8 +360,6 @@ def process_one(
                 else None
             ),
         )
-        if progress is not None:
-            progress._close_item_bar(audio_id, "tracks_segments")
         audacity_labels = export_audacity_labels(output_dir, segments, vad_segments)
         if bool(config.get("export", {}).get("write_visualizations", True)):
             write_visualizations(speaker_waveform, sample_rate, segments, tracks, output_dir)
@@ -491,8 +373,6 @@ def process_one(
                 else None
             ),
         )
-        if progress is not None:
-            progress._close_item_bar(audio_id, "tracks_asr_audio")
         sections.append(
             section(
                 "tracks",
@@ -719,7 +599,7 @@ def process_post_asr(
     output_root: Path,
     state_dir: Path,
     dry_run: bool,
-    progress: ProgressBar | None = None,
+    progress: StepLogger | None = None,
 ) -> tuple[Path, list]:
     audio_id = audio_path.stem
     output_dir = output_root / audio_id
@@ -794,7 +674,6 @@ def main() -> int:
     parser.add_argument("--config", default="config.json")
     parser.add_argument("--input", default="")
     parser.add_argument("--output", default="")
-    parser.add_argument("--log-dir", default="")
     parser.add_argument("--state-dir", default="")
     parser.add_argument("--until", choices=["", "pre_asr"], default="")
     parser.add_argument("--from", dest="from_phase", choices=["", "post_asr"], default="")
@@ -811,33 +690,13 @@ def main() -> int:
     if not files:
         raise FileNotFoundError(f"No audio files found in {input_path}")
 
-    run_date = datetime.now().strftime("%Y-%m-%d")
-    log_dir = resolve_log_dir(config, run_date, args.log_dir)
-    batch_items = [
-        (
-            "batch",
-            [
-                kv("input_path", input_path),
-                kv("output_path", output_root),
-                kv("log_dir", log_dir),
-                kv("state_dir", state_dir_for_batch_log(output_root, state_dir, files)),
-                kv("dry_run", dry_run),
-                kv("files", len(files)),
-            ],
-        )
-    ]
-    log_tree(
-        "Vilier pipeline",
-        batch_items,
-    )
+    get_logger("vilier").info("Batch input=%s output=%s files=%d dry_run=%s", input_path, output_root, len(files), dry_run)
 
     success = 0
     failed = 0
-    progress_enabled = bool(config.get("logging", {}).get("progress_bar", True))
     for audio_path in files:
-        audio_log_path = log_path_for_audio(log_dir, audio_path)
-        progress_total = 8 if args.until == "pre_asr" else 3 if args.from_phase == "post_asr" else 10
-        progress = ProgressBar(total=progress_total, enabled=progress_enabled)
+        logger = get_logger("vilier")
+        progress = StepLogger(logger)
         try:
             _, sections = process_one(
                 audio_path,
@@ -849,39 +708,16 @@ def main() -> int:
                 from_phase=args.from_phase,
                 progress=progress,
             )
-            log_tree(f"audio={audio_path.stem}", sections)
-            write_tree_log(audio_log_path, f"audio={audio_path.stem}", sections)
+            logger.info("Audio %s complete", audio_path.stem)
             success += 1
         except PipelineRunError as exc:
-            error_sections = exc.sections + [
-                section(
-                    exc.step,
-                    "FAIL",
-                    [
-                        kv("error_type", type(exc.original).__name__),
-                        kv("error", exc.original),
-                    ],
-                )
-            ]
-            log_tree(
-                f"audio={exc.audio_id}",
-                error_sections,
-                level="ERROR",
-            )
-            write_tree_log(audio_log_path, f"audio={exc.audio_id}", error_sections, level="ERROR")
+            logger.error("Audio %s failed: %s", exc.audio_id, exc.original)
             failed += 1
         except Exception as exc:
-            error_sections = [section("pipeline", "FAIL", [kv("error_type", type(exc).__name__), kv("error", exc)])]
-            log_tree(
-                f"audio={audio_path.stem}",
-                error_sections,
-                level="ERROR",
-            )
-            write_tree_log(audio_log_path, f"audio={audio_path.stem}", error_sections, level="ERROR")
+            logger.error("Audio %s failed: %s", audio_path.stem, exc)
             failed += 1
-    done_items = batch_items + [section("done", "PASS" if failed == 0 else "FAIL", [kv("success", success), kv("failed", failed)])]
-    log_tree("batch done", [kv("success", success), kv("failed", failed)])
-    write_tree_log(batch_log_path(log_dir), "Vilier pipeline", done_items, level="INFO" if failed == 0 else "ERROR")
+    logger = get_logger("vilier")
+    logger.info("Batch complete: success=%d failed=%d", success, failed)
     return 0 if failed == 0 else 1
 
 

@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "pipeline" / "vilier" / "src"
@@ -70,7 +71,20 @@ def test_embedding_assignment_replaces_energy_heuristic_for_overlap_source_order
     np.testing.assert_allclose(result["segment_audio"]["b"], 0.1, atol=1e-6)
 
 
-def test_pyannote_assigner_uses_first_source_for_short_overlap_audio():
+def test_overlap_reconstruction_rejects_unverified_channel_order():
+    class FakeSeparator:
+        def separate(self, audio, sample_rate):
+            return np.full_like(audio, 0.8), np.full_like(audio, 0.2)
+
+    segments = [
+        SpeakerSegment("a", "SPEAKER_00", 0.0, 3.0),
+        SpeakerSegment("b", "SPEAKER_01", 1.0, 2.0),
+    ]
+    with pytest.raises(RuntimeError, match="requires pyannote speaker embeddings"):
+        apply_overlap_separation(np.full(40, 0.1, dtype=np.float32), 10, segments, FakeSeparator(), 0.1)
+
+
+def test_pyannote_assigner_rejects_short_overlap_audio_without_verified_identity():
     assigner = PyannoteOverlapAssigner.__new__(PyannoteOverlapAssigner)
     assigner._embedding = lambda audio, sample_rate: None
     first = np.array([0.2], dtype=np.float32)
@@ -78,13 +92,11 @@ def test_pyannote_assigner_uses_first_source_for_short_overlap_audio():
     seg1 = SpeakerSegment("a", "SPEAKER_00", 0.0, 1.0)
     seg2 = SpeakerSegment("b", "SPEAKER_01", 0.0, 1.0)
 
-    assigned = assigner.assign(seg1, seg2, first, second, 16000, {})
-
-    assert assigned[0] is first
-    assert assigned[1] is second
+    with pytest.raises(RuntimeError, match="too short"):
+        assigner.assign(seg1, seg2, first, second, 16000, {})
 
 
-def test_pyannote_assigner_matches_sommelier_no_reference_source_swap():
+def test_pyannote_assigner_rejects_missing_reference_instead_of_guessing_source_order():
     assigner = PyannoteOverlapAssigner.__new__(PyannoteOverlapAssigner)
     assigner._embedding = lambda audio, sample_rate: np.array([1.0], dtype=np.float32)
     first = np.array([0.2], dtype=np.float32)
@@ -92,7 +104,5 @@ def test_pyannote_assigner_matches_sommelier_no_reference_source_swap():
     seg1 = SpeakerSegment("a", "SPEAKER_00", 0.0, 1.0)
     seg2 = SpeakerSegment("b", "SPEAKER_01", 0.0, 1.0)
 
-    assigned = assigner.assign(seg1, seg2, first, second, 16000, {})
-
-    assert assigned[0] is second
-    assert assigned[1] is first
+    with pytest.raises(RuntimeError, match="no speaker reference"):
+        assigner.assign(seg1, seg2, first, second, 16000, {})

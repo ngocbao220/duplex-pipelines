@@ -3,26 +3,19 @@
 Inputs: One mixture path, phase/model settings, output location.
 Outputs: Speaker A/B WAV files and inspectable phase artifacts.
 """
-import sys
 import torch
-import torchaudio
-import subprocess
 from pathlib import Path
-
-from tqdm import tqdm
 
 from .preprocess import prepare_input
 from .diarization import diarize
 from .dialogues import summarize
-from .separation import separate
+from .separation import separate, separate_waveform
 from .reconstruct import write_tracks
+from .audio import load_wav_tensor
+from .separation_backend import load_separation_models
 
-from core.outputs import (
-    copy_file,
-    save_wav,
-    write_diarization_phase,
-    write_json,
-)
+from core.orchestration.logging_style import StepTimer, get_logger
+from core.outputs import write_json
 
 import argparse
 
@@ -41,20 +34,8 @@ def resolve_output_dir(output_prefix: str, output_dir: str | None = None) -> Pat
     return parent if str(parent) != "." else Path("outputs") / "single_audio"
 
 
-def make_chunk_progress(desc: str, unit: str):
-    pbar = None
-
-    def progress_callback(event: str, value: int) -> None:
-        nonlocal pbar
-        if event == "start":
-            pbar = tqdm(total=value, desc=desc, unit=unit, leave=False)
-        elif event == "advance" and pbar is not None:
-            pbar.update(value)
-        elif event == "close" and pbar is not None:
-            pbar.close()
-            pbar = None
-
-    return progress_callback
+def _no_progress(event: str, value: int) -> None:
+    """Pipeline progress is emitted as colored step logs, not tqdm bars."""
 
 
 def run_single_audio(
@@ -69,6 +50,7 @@ def run_single_audio(
     output_dir=None,
     runtime_device="auto",
     num_steps=30,
+    scale=False,
 ):
     from .devices import resolve_device
     device = resolve_device(runtime_device, allow_cpu_fallback=True)
@@ -76,67 +58,82 @@ def run_single_audio(
     if not audio_path.exists():
         raise FileNotFoundError(audio_path)
 
-    print(f"========= Phase 1: Preparing input ({audio_path.name}) =========", flush=True)
-    print(f"Config: Diarize Chunk={diarize_chunk}s, Separate Chunk={separate_chunk}s")
-    print(f"Diarization: backend={diarization_backend}, model={diarization_model}")
-    print(f"Separation: backend={separation_backend}, model={separation_model or 'default'}")
+    logger = get_logger("duplexchat")
+    logger.info("execution_mode=%s", "per_conversation_scale" if scale else "full_input_debug")
+    logger.info("Diarization backend=%s model=%s device=%s", diarization_backend, diarization_model, device)
+    logger.info("Separation backend=%s model=%s", separation_backend, separation_model or "default")
 
     phase_output_dir = resolve_output_dir(output_prefix, output_dir)
     phase_output_dir.mkdir(parents=True, exist_ok=True)
     temp_wav = phase_output_dir / "phase_01_preprocess" / "audio_16k_mono.wav"
-    with tqdm(total=2, desc=f"{audio_path.stem} / preprocess", unit="step", leave=False) as pbar:
+    with StepTimer(logger, "Step 0: Preprocess"):
         temp_wav = prepare_input(audio_path, phase_output_dir)
-        pbar.update(1)
-        # The standardized input is already persisted in the phase directory.
-        pbar.update(1)
 
-    print("========= Phase 2: Loading diarization model =========", flush=True)
-    with tqdm(total=1, desc=f"{audio_path.stem} / load diarizer", unit="model", leave=False) as pbar:
-        diarize_pipeline = None
-        pbar.update(1)
-
-    print("========= Phase 2: Running Pipeline: Diarization =========", flush=True)
-    diarization_progress = make_chunk_progress(f"{audio_path.stem} / diarization", "chunk")
-    diarize_pipeline, segments = diarize(temp_wav, phase_output_dir, diarization_model, diarization_backend, device, diarize_chunk, diarization_progress)
-    with tqdm(total=1, desc="write diarization", unit="file", leave=False) as pbar:
-        pbar.update(1)
-
-    print("========= Phase 2.1: Detecting conversations =========", flush=True)
-    conversations, valid_dialogues = summarize(segments)
-    print(f"Conversations by silence gap: {len(conversations)}", flush=True)
-    for index, dialogue in enumerate(conversations, 1):
-        print(
-            f"  conversation_{index:02d}: {dialogue.start:.2f}s -> {dialogue.end:.2f}s "
-            f"({dialogue.duration:.2f}s, speakers={len(dialogue.speakers)})",
-            flush=True,
-        )
-    print(f"DuplexChat-valid dialogues: {len(valid_dialogues)}", flush=True)
-    for index, dialogue in enumerate(valid_dialogues, 1):
-        print(
-            f"  dialogue_{index:02d}: {dialogue.start:.2f}s -> {dialogue.end:.2f}s "
-            f"({dialogue.duration:.2f}s, speakers={','.join(sorted(dialogue.speakers))})",
-            flush=True,
+    with StepTimer(logger, "Step 1: Speaker Diarization"):
+        diarize_pipeline, segments = diarize(temp_wav, phase_output_dir, diarization_model, diarization_backend, device, diarize_chunk, _no_progress)
+    with StepTimer(logger, "Step 2: Detect two-speaker conversations"):
+        conversations, valid_dialogues = summarize(segments)
+        logger.info("conversations=%d valid_two_speaker_conversations=%d", len(conversations), len(valid_dialogues))
+        write_json(
+            phase_output_dir / "conversations_2spk.json",
+            {
+                "execution_mode": "per_conversation_scale" if scale else "full_input_debug",
+                "conversations": [
+                    {"id": f"conversation_{index:05d}", "start": item.start, "end": item.end,
+                     "duration": item.duration, "speakers": sorted(item.speakers), "segments": item.segments}
+                    for index, item in enumerate(valid_dialogues)
+                ],
+            },
         )
 
     if str(device).startswith("cuda"):
         release_diarization_gpu_memory(diarize_pipeline)
     del diarize_pipeline
 
-    print("========= Phase 3: Loading separation model =========", flush=True)
-    with tqdm(total=1, desc=f"{audio_path.stem} / load separator", unit="model", leave=False) as pbar:
-        pbar.update(1)
-    print("========= Phase 4: Running Pipeline: Separation =========", flush=True)
-    separation_progress = make_chunk_progress(f"{audio_path.stem} / separation", "chunk")
-    spk0, spk1, out_sr = separate(temp_wav, device, separation_backend, separation_model, num_steps, separate_chunk, separation_progress)
+    if scale:
+        waveform, sample_rate = load_wav_tensor(temp_wav)
+        collection_dir = Path(output_prefix).parent / "conversations"
+        with StepTimer(logger, "Step 3: Per-conversation speech separation"):
+            models = load_separation_models(device=device, backend=separation_backend, model_id=separation_model)
+            conversations = []
+            for index, dialogue in enumerate(valid_dialogues):
+                conversation_id = f"conversation_{index:05d}"
+                start = max(0, int(round(dialogue.start * sample_rate)))
+                end = min(waveform.shape[-1], int(round(dialogue.end * sample_rate)))
+                if end <= start:
+                    continue
+                directory = collection_dir / conversation_id
+                directory.mkdir(parents=True, exist_ok=True)
+                mixture = waveform[:, start:end]
+                mixture_path = directory / "mixture.wav"
+                from core.outputs import save_wav
+                save_wav(mixture_path, mixture, sample_rate)
+                spk_a, spk_b, out_sr = separate_waveform(
+                    mixture, sample_rate, models, num_steps, separate_chunk, _no_progress
+                )
+                out_a = directory / "speakerA.wav"
+                out_b = directory / "speakerB.wav"
+                save_wav(out_a, spk_a, out_sr)
+                save_wav(out_b, spk_b, out_sr)
+                record = {
+                    "id": conversation_id, "start": dialogue.start, "end": dialogue.end,
+                    "duration": dialogue.duration, "speakers": sorted(dialogue.speakers),
+                    "segments": dialogue.segments, "mixture": str(mixture_path),
+                    "tracks": [str(out_a), str(out_b)], "sample_rate": out_sr,
+                }
+                write_json(directory / "metadata.json", record)
+                conversations.append(record)
+                logger.info("Separated %s (%.2fs)", conversation_id, dialogue.duration)
+        write_json(collection_dir / "manifest.json", {"conversations": conversations})
+        logger.info("Saved %d conversation collections: %s", len(conversations), collection_dir)
+        return {"tracks": [], "segments": segments, "valid_dialogues": valid_dialogues, "conversations": conversations}
+    with StepTimer(logger, "Step 3: Full-input speech separation"):
+        spk0, spk1, out_sr = separate(temp_wav, device, separation_backend, separation_model, num_steps, separate_chunk, _no_progress)
 
-    print("========= Phase 5: Writing outputs =========", flush=True)
-    with tqdm(total=5, desc=f"{audio_path.stem} / save outputs", unit="file", leave=False) as pbar:
+    with StepTimer(logger, "Step 4: Local reconstruction"):
         out_A, out_B = write_tracks(output_prefix, phase_output_dir, spk0, spk1, out_sr, separation_backend, separation_model)
-        pbar.update(5)
-
-    print(f"Done! Saved to:")
-    print(f" - {out_A} (Người A)")
-    print(f" - {out_B} (Người B)")
+    logger.info("Saved speaker tracks: %s, %s", out_A, out_B)
+    return {"tracks": [out_A, out_B], "segments": segments, "valid_dialogues": valid_dialogues}
 
 def main():
     parser = argparse.ArgumentParser(description="Test DuplexChat on a single audio file.")

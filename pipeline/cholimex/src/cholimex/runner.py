@@ -6,15 +6,14 @@ Outputs: Speaker WAVs, run manifest, and optional debug phase artifacts.
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 
 import torch
 import torchaudio.functional as F_audio
-from tqdm import tqdm
 
 from core import outputs
 from core.config import Config
+from core.orchestration.logging_style import StepTimer, get_logger
 from . import preprocess as audio
 from . import separation as separate
 from .devices import resolve_device
@@ -25,21 +24,12 @@ from .speaker_assignment import SpeechBrainEmbeddingExtractor, build_reference_e
 from .vad import run_silero_vad, write_vad_artifacts
 
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger("cholimex")
 
 
 def _make_progress(desc: str, unit: str = "chunk"):
-    pbar = None
-
     def _callback(event: str, value: int) -> None:
-        nonlocal pbar
-        if event == "start":
-            pbar = tqdm(total=value, desc=desc, unit=unit, leave=False)
-        elif event == "advance" and pbar is not None:
-            pbar.update(value)
-        elif event == "close" and pbar is not None:
-            pbar.close()
-            pbar = None
+        return None
 
     return _callback
 
@@ -60,26 +50,19 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
     duration_sec = original.shape[-1] / sample_rate
     device = resolve_device(cfg.runtime_device, cfg.allow_cpu_fallback)
 
-    LOGGER.info("Cholimex stage 1: DialogueSidon proposal")
-    proposal_models = separate.load_separation_models(
-        device,
-        cfg.cholimex_proposal_backend,
-        cfg.cholimex_proposal_model,
-    )
-    sidon_0, sidon_1, sidon_sr = separate.run_separation(
-        original,
-        sample_rate,
-        cfg.separation_num_steps,
-        proposal_models,
-        progress_callback=_make_progress(f"cholimex proposal {input_path.stem}"),
-    )
+    with StepTimer(LOGGER, "Step 1: Proposal separation", duration_sec=duration_sec,
+                   details=f"backend={cfg.cholimex_proposal_backend} device={device}"):
+        proposal_models = separate.load_separation_models(device, cfg.cholimex_proposal_backend, cfg.cholimex_proposal_model)
+        sidon_0, sidon_1, sidon_sr = separate.run_separation(
+            original, sample_rate, cfg.separation_num_steps, proposal_models,
+            progress_callback=_make_progress(f"cholimex proposal {input_path.stem}"))
     sidon_0 = _align_proposal_track(sidon_0, sidon_sr, sample_rate, original.shape[-1], "sidon_track_0")
     sidon_1 = _align_proposal_track(sidon_1, sidon_sr, sample_rate, original.shape[-1], "sidon_track_1")
     sidon_sr = sample_rate
     outputs.save_wav(debug_dir / "sidon_track_0.wav", sidon_0, sidon_sr)
     outputs.save_wav(debug_dir / "sidon_track_1.wav", sidon_1, sidon_sr)
 
-    LOGGER.info("Cholimex stage 2: VAD masking on provisional tracks")
+    LOGGER.info("Step 2: VAD masking on provisional tracks")
     mask_0 = run_silero_vad(
         sidon_0,
         sidon_sr,
@@ -101,7 +84,7 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
     write_vad_artifacts(debug_dir / "vad_track_0.json", debug_dir / "vad_track_0.txt", mask_0)
     write_vad_artifacts(debug_dir / "vad_track_1.json", debug_dir / "vad_track_1.txt", mask_1)
 
-    LOGGER.info("Cholimex stage 3: region classification")
+    LOGGER.info("Step 3: Region classification")
     regions = classify_regions(
         mask_0,
         mask_1,
@@ -114,7 +97,7 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
     embedder = None
     references = {}
     if overlap_regions:
-        LOGGER.info("Cholimex stage 4: speaker references and overlap separation")
+        LOGGER.info("Step 4: Speaker references and overlap separation")
         embedder = SpeechBrainEmbeddingExtractor(cfg.cholimex_speaker_embedding_model, device=device)
         references = build_reference_embeddings(
             original,
@@ -148,18 +131,22 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
             progress_callback=_make_progress(f"cholimex overlap {input_path.stem}"),
         )
 
-    LOGGER.info("Cholimex stage 5: reconstruction")
-    final_0, final_1, overlap_records = reconstruct_tracks(
-        original,
-        sample_rate,
-        regions,
-        _separator if overlap_regions else None,
-        references,
-        embedder,
-        cfg.cholimex_cosine_similarity_threshold,
-        cfg.cholimex_overlap_padding,
-    )
-    outputs.write_json(debug_dir / "overlap_regions.json", overlap_records)
+    def _write_overlap_debug(record: dict, mixture: torch.Tensor, speaker_0: torch.Tensor,
+                             speaker_1: torch.Tensor, sr: int) -> None:
+        directory = debug_dir / "overlaps" / record["id"]
+        directory.mkdir(parents=True, exist_ok=True)
+        outputs.save_wav(directory / "mixture.wav", mixture, sr)
+        outputs.save_wav(directory / "speakerA.wav", speaker_0, sr)
+        outputs.save_wav(directory / "speakerB.wav", speaker_1, sr)
+        outputs.write_json(directory / "metadata.json", record)
+
+    with StepTimer(LOGGER, "Step 5: Reconstruction", duration_sec=duration_sec,
+                   details=f"overlap_regions={len(overlap_regions)}"):
+        final_0, final_1, overlap_records = reconstruct_tracks(
+            original, sample_rate, regions, _separator if overlap_regions else None, references, embedder,
+            cfg.cholimex_cosine_similarity_threshold, cfg.cholimex_overlap_padding,
+            debug_callback=_write_overlap_debug if overlap_regions else None)
+    outputs.write_json(debug_dir / "overlaps.json", overlap_records)
     outputs.save_wav(output_dir / "speaker_0.wav", final_0, sample_rate)
     outputs.save_wav(output_dir / "speaker_1.wav", final_1, sample_rate)
     outputs.save_wav(debug_dir / "final_track_0.wav", final_0, sample_rate)

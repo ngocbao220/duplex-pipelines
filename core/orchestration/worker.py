@@ -6,13 +6,13 @@ import json
 import sys
 from pathlib import Path
 
-from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path = [entry for entry in sys.path if Path(entry).resolve() != Path(__file__).resolve().parent]
 sys.path.insert(0, str(ROOT / "core"))
 sys.path.insert(0, str(ROOT))
 from core.orchestration.contract import run_sample, write_json
+from core.orchestration.logging_style import get_logger
 
 
 def cholimex(source, output, config):
@@ -37,16 +37,27 @@ def duplexchat(source, output, config):
     config = dict(config)
     debug = bool(config.pop('debug', False))
     phase_dir = output / 'phases'
-    run_single_audio(str(source), output_prefix=str(output / 'speaker'),
-                     output_dir=str(phase_dir), **config)
+    result = run_single_audio(str(source), output_prefix=str(output / 'speaker'),
+                              output_dir=str(phase_dir), **config)
     if debug:
         import shutil
         shutil.move(str(phase_dir), str(output / 'debug'))
     else:
         import shutil
         shutil.rmtree(phase_dir)
+    if config.get("scale"):
+        conversations = result["conversations"]
+        return [], {
+            'output_kind': 'conversation_collection',
+            'conversations': conversations,
+            'device': resolve_device(config.get('runtime_device', 'auto')),
+            'conversations_2spk': len(conversations),
+            'execution_mode': 'per_conversation_scale',
+        }
     return [output / 'speakerA.wav', output / 'speakerB.wav'], {
-        'device': resolve_device(config.get('runtime_device', 'auto'))}
+        'device': resolve_device(config.get('runtime_device', 'auto')),
+        'conversations_2spk': len(result['valid_dialogues']),
+        'execution_mode': 'per_conversation_scale' if config.get('scale') else 'full_input_debug'}
 
 
 def vilier(source, output, config):
@@ -67,22 +78,18 @@ def run_batch(request: dict, adapter=None) -> list[dict]:
     name = request['pipeline']
     adapter = adapter or ADAPTERS[name]
     results = []
-    print(f"========= Phase 3: Running Pipeline: {name} =========", flush=True)
-    with tqdm(total=len(request['samples']), desc=f"{name} / samples", unit="sample") as progress:
-        for index, sample in enumerate(request['samples'], 1):
-            progress.set_postfix_str(sample['key'], refresh=True)
-            print(f"[{name} {index}/{len(request['samples'])}] Processing sample {sample['key']}", flush=True)
-            result = run_sample(name, sample, Path(request['pred_root']) / sample['key'],
-                                request['config'], request['code'], adapter, force=request['force'])
-            results.append(result)
-            write_json(Path(request['results']), results)
-            progress.update(1)
-            if result["status"] == "complete":
-                print(f"[{name}] Complete sample {sample['key']}"
-                      f"{' (resumed)' if result.get('resumed') else ''}", flush=True)
-            else:
-                print(f"[{name}] Failed sample {sample['key']}; details: "
-                      f"{Path(request['pred_root']) / sample['key'] / 'run.json'}", flush=True)
+    logger = get_logger(name)
+    logger.info("Step 1: Running pipeline (%d samples)", len(request['samples']))
+    for index, sample in enumerate(request['samples'], 1):
+        logger.info("Processing sample %d/%d: %s", index, len(request['samples']), sample['key'])
+        result = run_sample(name, sample, Path(request['pred_root']) / sample['key'],
+                            request['config'], request['code'], adapter, force=request['force'])
+        results.append(result)
+        write_json(Path(request['results']), results)
+        if result["status"] == "complete":
+            logger.info("Complete sample %s%s", sample['key'], " (resumed)" if result.get('resumed') else "")
+        else:
+            logger.error("Failed sample %s; details: %s", sample['key'], Path(request['pred_root']) / sample['key'] / 'run.json')
     return results
 
 
@@ -94,11 +101,10 @@ def main():
     args = parser.parse_args()
     if args.check_imports:
         __import__(args.check_imports)
-        print(f'{args.check_imports} imports OK', flush=True)
+        get_logger(args.check_imports).info("Imports OK")
         return 0
     request = json.loads(args.request.read_text())
-    print(f"Pipeline={request['pipeline']} interpreter={sys.executable}", flush=True)
-    print(json.dumps(request['config'], ensure_ascii=False, indent=2), flush=True)
+    get_logger(request['pipeline']).info("Pipeline=%s interpreter=%s", request['pipeline'], sys.executable)
     rows = run_batch(request)
     return int(any(row['status'] != 'complete' for row in rows))
 

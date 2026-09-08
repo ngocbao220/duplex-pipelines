@@ -2,12 +2,8 @@ import json
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
-
-from pipeline.cli import format_elapsed, run_with_progress_heartbeat
-
 
 class CliPhaseTest(unittest.TestCase):
     def test_pre_asr_and_post_asr_phases(self):
@@ -151,35 +147,6 @@ class CliPhaseTest(unittest.TestCase):
 
             manifest = json.loads((output_root / "podcast_single_30s" / "manifest.timeline.json").read_text(encoding="utf-8"))
             self.assertGreater(len(manifest["segments"]), 0)
-
-    def test_progress_heartbeat_reports_elapsed_time_during_long_step(self):
-        class FakeProgress:
-            def __init__(self):
-                self.items = []
-
-            def item(self, audio_id, step, current, total, label):
-                self.items.append((audio_id, step, current, total, label))
-
-        progress = FakeProgress()
-
-        result = run_with_progress_heartbeat(
-            lambda: (time.sleep(0.03), "done")[1],
-            progress,
-            "real",
-            "diarization",
-            "running audio.standardized.wav",
-            0.01,
-        )
-
-        self.assertEqual(result, "done")
-        self.assertGreaterEqual(len(progress.items), 1)
-        self.assertIn("elapsed=", progress.items[-1][-1])
-
-    def test_format_elapsed_is_compact(self):
-        self.assertEqual(format_elapsed(13), "13s")
-        self.assertEqual(format_elapsed(73), "1m13s")
-        self.assertEqual(format_elapsed(3673), "1h01m13s")
-
 
 if __name__ == "__main__":
     unittest.main()

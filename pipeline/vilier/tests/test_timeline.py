@@ -1207,6 +1207,13 @@ class TimelineTest(unittest.TestCase):
             def separate(self, audio_segment, sample_rate):
                 return np.full_like(audio_segment, 0.8), np.full_like(audio_segment, 0.2)
 
+        class FakeAssigner:
+            def reference_embeddings(self, segments, waveform, sample_rate, pairs):
+                return {"SPEAKER_00": np.array([1.0]), "SPEAKER_01": np.array([0.0])}
+
+            def assign(self, seg1, seg2, src1, src2, sample_rate, references):
+                return src1, src2
+
         sample_rate = 10
         waveform = np.full(sample_rate * 4, 0.1, dtype=np.float32)
         waveform[:10] = 0.3
@@ -1215,7 +1222,8 @@ class TimelineTest(unittest.TestCase):
             SpeakerSegment("a", "SPEAKER_00", 0.0, 3.0),
             SpeakerSegment("b", "SPEAKER_01", 1.0, 2.0),
         ]
-        result = apply_overlap_separation(waveform, sample_rate, segments, FakeSeparator(), overlap_threshold=0.1)
+        result = apply_overlap_separation(waveform, sample_rate, segments, FakeSeparator(), overlap_threshold=0.1,
+                                          speaker_assigner=FakeAssigner())
 
         self.assertEqual(len(result["overlap_regions"]), 1)
         self.assertEqual(result["overlap_regions"][0]["start"], 1.0)
@@ -1234,6 +1242,13 @@ class TimelineTest(unittest.TestCase):
             def separate(self, audio_segment, sample_rate):
                 return np.full_like(audio_segment, 0.8), np.full_like(audio_segment, 0.2)
 
+        class FakeAssigner:
+            def reference_embeddings(self, segments, waveform, sample_rate, pairs):
+                return {"SPEAKER_00": np.array([1.0]), "SPEAKER_01": np.array([0.0])}
+
+            def assign(self, seg1, seg2, src1, src2, sample_rate, references):
+                return src1, src2
+
         sample_rate = 10
         waveform = np.full(sample_rate * 4, 0.1, dtype=np.float32)
         segments = [
@@ -1242,7 +1257,8 @@ class TimelineTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
-            result = apply_overlap_separation(waveform, sample_rate, segments, FakeSeparator(), overlap_threshold=0.1, output_dir=out)
+            result = apply_overlap_separation(waveform, sample_rate, segments, FakeSeparator(), overlap_threshold=0.1,
+                                              output_dir=out, speaker_assigner=FakeAssigner())
             region = result["overlap_regions"][0]
 
             self.assertEqual(region["id"], "overlap_00001")
