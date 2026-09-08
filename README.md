@@ -35,6 +35,36 @@ reference benchmark. `compare-otospeech` tải/chuẩn bị mỗi mixture một 
 worker chỉ nhận mixture, rồi benchmark từng pipeline
 và bảng tổng trên giao các sample hợp lệ.
 
+## So sánh checkpoint separation trên một mixture
+
+`tools/test_separation_models.py` là smoke-test độc lập; nó không chạy
+diarization hay reconstruction của bất kỳ pipeline nào. Nó chạy mỗi checkpoint
+trên đúng một WAV overlap/mixed, tiếp tục khi một model lỗi, và ghi
+`summary.json` cùng `report.json`/WAV theo từng model.
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run --project pipeline/vilier \
+  --with 'diffusers>=0.30' --with 'transformers>=4.44' --with 'asteroid>=0.7' \
+  python tools/test_separation_models.py \
+  --input /path/to/overlap_mixture.wav \
+  --output-dir outputs/separation-smoke \
+  --models all --device auto --max-seconds 30
+```
+
+Các source được giữ nguyên theo output native: hai-source models có thêm
+`speakerA.wav`/`speakerB.wav`; Rahma89 là Conv-TasNet **ba source**, nên chỉ ghi
+`source_01.wav` đến `source_03.wav` và report ghi `two_track_output: false`.
+SepReformer cần checkpoint thật:
+
+```bash
+export VILIER_SEPREFORMER_CHECKPOINT=/path/to/epoch.0180.pth
+```
+
+Đây là smoke test runtime (thời gian/RTF), không phải SI-SDR/PESQ benchmark;
+muốn metric khách quan cần cung cấp source tham chiếu tương ứng. Nếu cần log
+traceback đầy đủ khi debug dependency/model card, thêm
+`SEPARATION_SMOKE_TRACEBACK=1` trước lệnh.
+
 Log console của worker dùng cùng format màu với Sommelier: `timestamp - pipeline
 - [INFO] - ...`; `worker.log` giữ bản không ANSI và chứa cả noise từ thư viện.
 Khi `--debug`, Vilier và Cholimex ghi overlap đã được gán speaker tại
