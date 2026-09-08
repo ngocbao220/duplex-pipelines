@@ -12,8 +12,8 @@ from .contract import write_json
 
 def run_single(name: str, source: Path, output: Path, debug: bool, gt_a: Path | None, gt_b: Path | None) -> int:
     """Run one adapter without ever passing reference audio to its worker."""
-    from duplexchat_pipe.config import load_config
-    from duplexchat_pipe import benchmark
+    from core.config import load_config
+    from core import benchmark
 
     if bool(gt_a) != bool(gt_b):
         raise ValueError("--gt-speaker-a and --gt-speaker-b must be provided together")

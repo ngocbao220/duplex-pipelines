@@ -275,7 +275,7 @@ Example SpeechBrain config:
 ## Run PhoWhisper ASR Only
 
 ```bash
-PYTHONPATH=. python -m pipeline.asr /path/to/audio.wav
+uv run --project . python -m vilier single --input /path/to/audio.wav --output-dir outputs/vilier
 ```
 
 ## Log Format

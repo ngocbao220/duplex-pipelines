@@ -12,7 +12,7 @@ from .contract import fingerprint, reusable, sha256, write_json
 from .process import stream_process
 from .report import comparison_report
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PIPELINES = ('cholimex', 'duplexchat', 'vilier')
 
 
@@ -22,9 +22,9 @@ def phase(title):
 
 def code_identity(name):
     digest = hashlib.sha256()
-    locations = [ROOT / 'comparison', ROOT / 'pipeline' / name]
+    locations = [ROOT / 'core', ROOT / 'pipeline' / name]
     if name != 'vilier':
-        locations.append(ROOT / 'src')
+        locations.append(ROOT / 'core')
     for location in locations:
         for directory, subdirs, files in os.walk(location):
             subdirs[:] = sorted(d for d in subdirs if not d.startswith('.') and d not in {'__pycache__', 'outputs', 'logs', 'inputs'})
@@ -112,7 +112,7 @@ def launch_pipeline(name, request, run_dir):
     env['UV_CACHE_DIR'] = str(ROOT / '.uv-cache')
     env.pop('PYTHONPATH', None)
     command = ['uv', 'run', '--project', str(project), '--no-dev',
-               'python', str(ROOT / 'comparison/worker.py'), '--request', str(request_path)]
+               'python', str(ROOT / 'core/orchestration/worker.py'), '--request', str(request_path)]
     try:
         return stream_process(command, project, run_dir / name / 'worker.log', env)
     except OSError as exc:

@@ -1,0 +1,9 @@
+"""Purpose: Provide the standalone Vilier command-line entrypoint.
+
+Inputs: ``single`` or ``otospeech`` command-line arguments.
+Outputs: Vilier run artifacts, benchmark reports and process exit status.
+"""
+from core.orchestration.cli import run_pipeline_command
+
+
+raise SystemExit(run_pipeline_command("vilier"))

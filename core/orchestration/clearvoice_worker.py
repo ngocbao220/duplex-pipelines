@@ -13,7 +13,7 @@ def main():
     parser.add_argument('--check-imports', action='store_true')
     args = parser.parse_args()
     sys.path = [entry for entry in sys.path if Path(entry).resolve() != Path(__file__).resolve().parent]
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'pipeline/vilier'))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'pipeline/vilier'))
     if args.check_imports:
         from clearvoice import ClearVoice
         print('ClearVoice imports OK')

@@ -8,16 +8,17 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path = [entry for entry in sys.path if Path(entry).resolve() != Path(__file__).resolve().parent]
+sys.path.insert(0, str(ROOT / "core"))
 sys.path.insert(0, str(ROOT))
-from comparison.contract import run_sample, write_json
+from core.orchestration.contract import run_sample, write_json
 
 
 def cholimex(source, output, config):
-    from duplexchat_pipe.config import Config, PATH_FIELDS
-    from pipeline.cholimex.pipeline.runner import run_cholimex_file
-    from duplexchat_pipe.devices import resolve_device
+    from core.config import Config, PATH_FIELDS
+    from cholimex.runner import run_cholimex_file
+    from cholimex.devices import resolve_device
     config = dict(config)
     debug = bool(config.pop('debug', False))
     cfg = Config(**{key: Path(value) if key in PATH_FIELDS and value is not None else value
@@ -31,8 +32,8 @@ def cholimex(source, output, config):
 
 
 def duplexchat(source, output, config):
-    from pipeline.duplexchat.pipeline.runner import run_single_audio
-    from duplexchat_pipe.devices import resolve_device
+    from duplexchat.runner import run_single_audio
+    from duplexchat.devices import resolve_device
     config = dict(config)
     debug = bool(config.pop('debug', False))
     phase_dir = output / 'phases'
@@ -49,8 +50,7 @@ def duplexchat(source, output, config):
 
 
 def vilier(source, output, config):
-    sys.path.insert(0, str(ROOT / 'pipeline/vilier'))
-    from pipeline.runner import run
+    from vilier.runner import run
     return run(source, output, config)
 
 
@@ -84,11 +84,7 @@ def main():
     group.add_argument('--check-imports', choices=list(ADAPTERS))
     args = parser.parse_args()
     if args.check_imports:
-        if args.check_imports == 'vilier':
-            sys.path.insert(0, str(ROOT / 'pipeline/vilier'))
-            from pipeline import cli
-        else:
-            from duplexchat_pipe import single_audio, cholimex
+        __import__(args.check_imports)
         print(f'{args.check_imports} imports OK', flush=True)
         return 0
     request = json.loads(args.request.read_text())

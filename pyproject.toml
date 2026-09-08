@@ -3,15 +3,12 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "duplexchat-pipe"
+name = "duplex-pipelines"
 version = "0.1.0"
-description = "DuplexChat construction pipeline: podcast crawling, diarization, two-speaker separation, and dataset reconstruction"
+description = "Three isolated two-speaker pipelines with shared OtoSpeech benchmarking"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "requests",
-    "feedparser",
-    "webdataset",
     "tqdm",
     "pyannote.audio",
     "torch",
@@ -20,11 +17,10 @@ dependencies = [
     "diffusers",
     "huggingface-hub",
     "wrapt>=2.4.0",
-    "yt-dlp>=2026.8.19",
 ]
 
 [project.scripts]
-duplexchat-pipe = "duplexchat_pipe.cli:main"
+duplex-pipelines = "cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]
@@ -54,7 +50,5 @@ benchmark = ["onnxruntime", "speechbrain>=1.0,<2.0"]
 #   torchcodec = [{ index = "pytorch-cu130" }]
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+packages = ["core", "core.orchestration"]
+py-modules = ["cli"]

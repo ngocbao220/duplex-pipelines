@@ -18,12 +18,8 @@ import torchaudio
 import torchaudio.functional as F_audio
 from huggingface_hub import HfApi, snapshot_download
 
-try:
-    from duplexchat_pipe.config import Config
-    from duplexchat_pipe.logging_utils import append_stats_table, setup_run_logging, write_artifacts
-except ModuleNotFoundError:
-    from config import Config
-    from logging_utils import append_stats_table, setup_run_logging, write_artifacts
+from .config import Config
+from .logging_utils import append_stats_table, setup_run_logging, write_artifacts
 
 
 LOGGER = logging.getLogger(__name__)

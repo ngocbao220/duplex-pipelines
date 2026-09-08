@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class IsolatedClearVoice:
@@ -38,7 +38,7 @@ class IsolatedClearVoice:
             env['CUDA_VISIBLE_DEVICES'] = '' if self.resolved_device == 'cpu' else self.resolved_device.partition(':')[2] or '0'
             self.child = subprocess.Popen(
                 ['uv', 'run', '--project', str(project), '--locked', '--no-dev', 'python',
-                 str(ROOT / 'comparison/clearvoice_worker.py'), '--model', self.model_name],
+                 str(ROOT / 'core/orchestration/clearvoice_worker.py'), '--model', self.model_name],
                 cwd=project, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 text=True, bufsize=1,
             )

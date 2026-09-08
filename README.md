@@ -19,14 +19,16 @@ truy cập PyPI trước khi dùng lockfile trong automation.
 ## Chạy
 
 ```bash
-uv run python single.py --pipeline vilier --input input.wav --debug
-uv run python single.py --pipeline cholimex --input input.wav --gt-speaker-a gt_a.wav --gt-speaker-b gt_b.wav
-uv run python end2end.py --pipeline all --data otospeech --max_gb 1
+uv run --project pipeline/vilier python -m vilier single --input input.wav --output-dir outputs/vilier --debug
+uv run --project pipeline/cholimex python -m cholimex single --input input.wav --output-dir outputs/cholimex --gt-speaker-a gt_a.wav --gt-speaker-b gt_b.wav
+uv run --project pipeline/duplexchat python -m duplexchat otospeech --max-gb 1 --max-samples 1 --max-seconds 60
+uv run --project . python cli.py compare-otospeech --max-gb 1 --max-samples 1 --max-seconds 60
 ```
 
-`single.py` thiếu GT sẽ ghi benchmark reference-free với metric reference là
-`null`; đủ hai GT sẽ ghi reference benchmark. `end2end.py` tải/chuẩn bị mỗi
-mixture OtoSpeech một lần, worker chỉ nhận mixture, rồi benchmark từng pipeline
+Mỗi package có hai subcommand: `single` và `otospeech`. `single` thiếu GT sẽ ghi
+benchmark reference-free với metric reference là `null`; đủ hai GT sẽ ghi
+reference benchmark. `compare-otospeech` tải/chuẩn bị mỗi mixture một lần,
+worker chỉ nhận mixture, rồi benchmark từng pipeline
 và bảng tổng trên giao các sample hợp lệ.
 
 Vilier cố định Silero VAD, Sortformer `nvidia/diar_sortformer_4spk-v1`,
