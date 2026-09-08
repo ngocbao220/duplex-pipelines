@@ -9,7 +9,7 @@ from typing import Callable
 
 import numpy as np
 
-from .audio import write_wav
+from .preprocess import write_wav
 from .schema import SpeakerSegment, SpeakerTrack, relative_path
 
 

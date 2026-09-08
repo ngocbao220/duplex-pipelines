@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import cli
+import importlib
+import sys
 from pathlib import Path
 from core.orchestration.cli import build_pipeline_parser
 
@@ -17,6 +19,16 @@ def test_each_pipeline_cli_exposes_single_and_otospeech_commands():
 def test_root_cli_exposes_one_explicit_comparison_command():
     args = cli.build_parser().parse_args(["compare-otospeech", "--max-samples", "1"])
     assert args.command == "compare-otospeech"
+
+
+def test_vilier_reconstruct_imports_the_renamed_preprocess_module():
+    source_root = Path(__file__).resolve().parents[1] / "pipeline" / "vilier" / "src"
+    sys.path.insert(0, str(source_root))
+    try:
+        module = importlib.import_module("vilier.reconstruct")
+    finally:
+        sys.path.remove(str(source_root))
+    assert callable(module.export_segments_and_tracks)
 
 
 def test_each_pipeline_owns_named_source_modules_with_contract_headers():
