@@ -8,7 +8,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "duplexchat" / "src"))
 
-from duplexchat.separation_backend import _retarget_exported_module  # noqa: E402
+from duplexchat.separation_backend import _canonical_export_device, _retarget_exported_module  # noqa: E402
 
 
 class _Node:
@@ -36,3 +36,8 @@ def test_export_device_retarget_rewrites_string_and_torch_device_literals():
     assert node.args == ("cuda:0", {"nested": torch.device("cuda:0")})
     assert node.kwargs == {"device": "cuda:0"}
     assert module.recompiled is True
+
+
+def test_gpu_zero_uses_dialoguesidon_export_canonical_cuda_device():
+    assert _canonical_export_device("cuda:0") == torch.device("cuda")
+    assert _canonical_export_device("cuda:1") == torch.device("cuda:1")

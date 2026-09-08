@@ -6,7 +6,6 @@ import sys
 import time
 
 ANSI_RESET = "\033[0m"
-ANSI_BLUE = "\033[1;34m"
 ANSI_GREEN = "\033[1;32m"
 ANSI_YELLOW = "\033[1;33m"
 ANSI_RED = "\033[1;31m"
@@ -20,7 +19,7 @@ class PlainFormatter(logging.Formatter):
 class SommelierColorFormatter(PlainFormatter):
     COLORS = {
         logging.DEBUG: ANSI_GREEN,
-        logging.INFO: ANSI_BLUE,
+        logging.INFO: ANSI_GREEN,
         logging.WARNING: ANSI_YELLOW,
         logging.ERROR: ANSI_RED,
         logging.CRITICAL: ANSI_RED,

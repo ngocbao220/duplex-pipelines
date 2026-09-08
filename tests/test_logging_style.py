@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from core.orchestration.logging_style import ANSI_BLUE, ANSI_RESET, PlainFormatter, SommelierColorFormatter
+from core.orchestration.logging_style import ANSI_GREEN, ANSI_RESET, PlainFormatter, SommelierColorFormatter
 
 
 def _record(level: int, message: str = "Step 2: Speaker Diarization") -> logging.LogRecord:
@@ -11,7 +11,7 @@ def _record(level: int, message: str = "Step 2: Speaker Diarization") -> logging
 
 def test_sommelier_console_format_has_colored_bracketed_info_level():
     text = SommelierColorFormatter().format(_record(logging.INFO))
-    assert ANSI_BLUE in text
+    assert ANSI_GREEN in text
     assert " - vilier - [INFO] - Step 2: Speaker Diarization" in text
     assert text.endswith(ANSI_RESET)
 

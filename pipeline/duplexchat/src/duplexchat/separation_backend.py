@@ -31,6 +31,20 @@ _cache: dict = {}
 _cache_lock = threading.Lock()
 
 
+def _canonical_export_device(device: str | torch.device) -> torch.device:
+    """Use the export artifact's canonical CUDA spelling on GPU 0.
+
+    DialogueSidon's graphs were exported with ``cuda`` (not ``cuda:0``).
+    PyTorch treats those as different devices for exported graph guards, even
+    though they select the same physical GPU.  Keep explicit nonzero GPUs
+    indexed so multi-GPU callers remain correct.
+    """
+    requested = torch.device(device)
+    if requested.type == "cuda" and requested.index in {None, 0}:
+        return torch.device("cuda")
+    return requested
+
+
 def _retarget_exported_module(module, device: torch.device):
     """Replace device literals captured by a torch.export graph."""
     def retarget(value):
@@ -113,7 +127,7 @@ def _load_dialoguesidon_models(device: str = "cuda", model_id: str | None = None
         with open(paths["metadata.json"]) as fp:
             meta = json.load(fp)
 
-        torch_device = torch.device(resolved)
+        torch_device = _canonical_export_device(resolved)
 
         # Enable TF32 for faster float32 matmuls on Ampere+ GPUs
         torch.backends.cuda.matmul.allow_tf32 = True
