@@ -5,6 +5,7 @@ Outputs: Updated speaker tracks and overlap separation artifacts.
 """
 from pathlib import Path
 import importlib
+import os
 import sys
 import types
 from typing import Callable
@@ -130,6 +131,7 @@ def preflight_overlap_separator(config: dict) -> None:
         return
     model_name = config.get("model_name", "SepReformer_Base_WSJ0")
     checkpoint_repo = config.get("checkpoint_repo", "")
+    checkpoint_path = config.get("checkpoint_path") or os.environ.get("VILIER_SEPREFORMER_CHECKPOINT", "")
     try:
         sepreformer_path = _resolve_sepreformer_path(config.get("sepreformer_path", "SepReformer"))
         if not sepreformer_path.exists():
@@ -139,12 +141,13 @@ def preflight_overlap_separator(config: dict) -> None:
             model_name,
             checkpoint_repo=checkpoint_repo,
             checkpoint_revision=config.get("checkpoint_revision", ""),
+            checkpoint_path=checkpoint_path,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         repo_hint = (
             f"checkpoint_repo={checkpoint_repo!r} could not provide compatible weights"
             if checkpoint_repo
-            else "set overlap_separation.checkpoint_repo to 'niobures/SepReformer' or copy trusted .pt/.pth weights"
+            else "set VILIER_SEPREFORMER_CHECKPOINT to a trusted local .pt/.pth weight file"
         )
         raise FileNotFoundError(
             f"Vilier preflight failed before diarization: SepReformer checkpoint for {model_name} is unavailable; "
@@ -166,6 +169,7 @@ def load_overlap_separator(config: dict, dry_run: bool = False, warnings: list[s
                 config.get("model_name", "SepReformer_Base_WSJ0"),
                 config.get("checkpoint_repo", ""),
                 config.get("checkpoint_revision", ""),
+                config.get("checkpoint_path") or os.environ.get("VILIER_SEPREFORMER_CHECKPOINT", ""),
             )
         except Exception as exc:
             if warnings is not None:
@@ -291,6 +295,7 @@ class SepReformerSeparator:
         model_name: str = "SepReformer_Base_WSJ0",
         checkpoint_repo: str = "",
         checkpoint_revision: str = "",
+        checkpoint_path: str | Path = "",
     ):
         import torch
         import yaml
@@ -299,6 +304,7 @@ class SepReformerSeparator:
         self.model_name = _validate_model_name(model_name)
         self.checkpoint_repo = checkpoint_repo
         self.checkpoint_revision = checkpoint_revision
+        self.configured_checkpoint_path = checkpoint_path
         self.resolved_device = resolve_auto_device(torch, device, warn_label="overlap_separation.device")
         self.device = torch.device(self.resolved_device)
         if not self.sepreformer_path.exists():
@@ -319,6 +325,7 @@ class SepReformerSeparator:
                 self.model_name,
                 checkpoint_repo=self.checkpoint_repo,
                 checkpoint_revision=self.checkpoint_revision,
+                checkpoint_path=self.configured_checkpoint_path,
             )
             self.model = Model(**self.config["model"])
             self.checkpoint_path = checkpoints[-1]
@@ -421,11 +428,18 @@ def _find_checkpoint_files(
     model_name: str = "SepReformer_Base_WSJ0",
     checkpoint_repo: str = "",
     checkpoint_revision: str = "",
+    checkpoint_path: str | Path = "",
 ) -> list[Path]:
+    if checkpoint_path:
+        path = Path(checkpoint_path).expanduser().resolve()
+        validate_checkpoint_file(path)
+        return [path]
     candidates = _checkpoint_dir_candidates(sepreformer_path, model_name)
     for checkpoint_dir in candidates:
         checkpoints = _checkpoint_files_in_dir(checkpoint_dir)
         if checkpoints:
+            for checkpoint in checkpoints:
+                validate_checkpoint_file(checkpoint)
             return checkpoints
 
     if checkpoint_repo:
@@ -437,6 +451,8 @@ def _find_checkpoint_files(
         )
         checkpoints = _checkpoint_files_in_tree(download_dir, model_name)
         if checkpoints:
+            for checkpoint in checkpoints:
+                validate_checkpoint_file(checkpoint)
             return checkpoints
 
     checked = ", ".join(str(path) for path in candidates)
@@ -467,6 +483,22 @@ def _checkpoint_files_in_tree(checkpoint_dir: Path, model_name: str) -> list[Pat
     checkpoints = sorted(path for path in checkpoint_dir.rglob("*") if path.suffix in {".pt", ".pth"})
     model_specific = [path for path in checkpoints if model_name in path.parts or model_name in path.name]
     return model_specific or checkpoints
+
+
+def validate_checkpoint_file(path: Path) -> None:
+    """Reject missing, empty, HTML, and Git-LFS pointer files before Torch deserializes them."""
+    if not path.is_file():
+        raise FileNotFoundError(f"SepReformer checkpoint file not found: {path}")
+    prefix = path.read_bytes()[:128].lstrip().lower()
+    if not prefix:
+        raise ValueError(f"SepReformer checkpoint is empty: {path}")
+    if prefix.startswith(b"version https://git-lfs.github.com/spec/"):
+        raise ValueError(
+            f"SepReformer checkpoint is a Git-LFS pointer, not model weights: {path}. "
+            "Download the actual trusted .pt/.pth artifact and set VILIER_SEPREFORMER_CHECKPOINT."
+        )
+    if prefix.startswith((b"<!doctype html", b"<html")):
+        raise ValueError(f"SepReformer checkpoint is an HTML response, not model weights: {path}")
 
 
 def _download_checkpoint_snapshot(

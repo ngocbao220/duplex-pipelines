@@ -200,7 +200,7 @@ Overlap separation is optional. If `overlap_separation.enabled=false`, overlappi
 |---------|---------------|-------|
 | ClearVoice MossFormer2 | `overlap_separation.backend=clearvoice`, `overlap_separation.model_name=alibabasglab/MossFormer2_SS_16K` | Downloads and runs the 16 kHz ClearVoice speech-separation model through `clearvoice.ClearVoice`. Install `requirements/clearvoice-separation.txt`. You can also use `overlap_separation.backend=mossformer2` as an alias. |
 | SpeechBrain SepFormer | `overlap_separation.backend=speechbrain`, `overlap_separation.model_name=speechbrain/sepformer-wsj02mix` | Downloads and runs the SpeechBrain SepFormer 2-speaker separation model through `speechbrain.inference.separation.SepformerSeparation`. Install `requirements/speechbrain-separation.txt`. |
-| SepReformer | `overlap_separation.backend=sepreformer`, `overlap_separation.model_name=<model_dir>` | `model_name` is the directory under `SepReFormer/models`. If the checkpoint is not present locally, set `overlap_separation.checkpoint_repo` to a Hugging Face repo such as `niobures/SepReformer`; the pipeline downloads `.pt`/`.pth` checkpoint files when overlap separation is enabled. |
+| SepReformer | `overlap_separation.backend=sepreformer`, `overlap_separation.model_name=<model_dir>` | `model_name` is the directory under `SepReFormer/models`. Supply a trusted real `.pt`/`.pth` file through `VILIER_SEPREFORMER_CHECKPOINT`; Git-LFS pointer files are rejected before inference. |
 
 PyTorch 2.6+ loads checkpoints with `weights_only=True` by default. Some legacy
 SepReformer `.pth` files require the older pickle loader, so Vilier retries that
@@ -242,7 +242,7 @@ Example SepReformer config:
     "backend": "sepreformer",
     "sepreformer_path": "SepReformer",
     "model_name": "SepReformer_Base_WSJ0",
-    "checkpoint_repo": "niobures/SepReformer",
+    "checkpoint_path": "/path/to/trusted/epoch.0180.pth",
     "checkpoint_revision": "",
     "device": "cpu",
     "overlap_threshold_seconds": 0.2

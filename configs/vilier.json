@@ -71,7 +71,6 @@
   "overlap_separation": {
     "enabled": true,
     "backend": "sepreformer",
-    "checkpoint_repo": "niobures/SepReformer",
     "model_name": "SepReformer_Base_WSJ0",
     "device": "auto",
     "overlap_threshold_seconds": 0.2

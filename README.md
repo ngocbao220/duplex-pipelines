@@ -34,3 +34,8 @@ và bảng tổng trên giao các sample hợp lệ.
 Vilier cố định Silero VAD, Sortformer `nvidia/diar_sortformer_4spk-v1`,
 overlap-only SepReformer `SepReformer_Base_WSJ0`, concat và cosine matching.
 Không có cờ đổi model Vilier.
+
+SepReformer cần weights `.pt`/`.pth` thật, không phải Git-LFS pointer. Trên
+Kaggle, attach dataset weights rồi đặt `VILIER_SEPREFORMER_CHECKPOINT` tới file
+checkpoint trước khi chạy Vilier; preflight sẽ kiểm tra file này trước
+diarization.
