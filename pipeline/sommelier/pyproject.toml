@@ -5,7 +5,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "duplex-pipelines", "numpy", "soundfile", "pydub", "librosa",
   "torch==2.7.1", "torchaudio==2.7.1", "torchmetrics==1.7.4",
-  "pyannote.audio==3.3.2", "speechbrain",
+  "pyannote.audio==3.3.2", "speechbrain==0.5.16",
   "nemo_toolkit[asr]", "panns-inference", "loguru", "tqdm",
   "lightning==2.4.0", "openai==1.97.1", "tritony==0.0.20",
   "pandas==2.3.1", "requests==2.32.4", "g2pk",
