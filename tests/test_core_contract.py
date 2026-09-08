@@ -1,9 +1,11 @@
 import json
+import sys
 
 import numpy as np
 import soundfile as sf
 
 from core.orchestration.contract import run_sample, validate_tracks
+from core.orchestration.process import stream_process
 from core.orchestration.report import comparison_report
 
 
@@ -48,3 +50,14 @@ def test_failed_sample_emits_one_concise_console_error_and_persists_traceback(tm
     assert "FileNotFoundError: checkpoint missing" in result["traceback"]
     assert "[vilier] FAILED sample" in captured
     assert "Traceback" not in captured
+
+
+def test_worker_forces_headless_matplotlib_backend_over_notebook_backend(tmp_path, monkeypatch):
+    monkeypatch.setenv("MPLBACKEND", "module://matplotlib_inline.backend_inline")
+    log = tmp_path / "worker.log"
+
+    assert stream_process(
+        [sys.executable, "-c", "import os; print(os.environ['MPLBACKEND'])"], tmp_path, log
+    ) == 0
+
+    assert log.read_text(encoding="utf-8").strip() == "Agg"

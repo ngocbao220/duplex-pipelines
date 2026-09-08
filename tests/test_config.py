@@ -43,3 +43,10 @@ def test_sommelier_runtime_declares_vendor_import_dependencies():
     dependencies = set(config["project"]["dependencies"])
     names = {dependency.split("[", 1)[0].split("=", 1)[0] for dependency in dependencies}
     assert {"openai", "onnxruntime", "faster-whisper", "whisperx"} <= names
+
+
+def test_sommelier_runtime_pins_upstream_torch_compatibility_set():
+    root = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((root / "pipeline" / "sommelier" / "pyproject.toml").read_text())
+    dependencies = set(config["project"]["dependencies"])
+    assert {"torch==2.7.1", "torchaudio==2.7.1", "torchmetrics==1.7.4"} <= dependencies

@@ -22,7 +22,9 @@ def stream_process(command: list[str], cwd: Path, log: Path, env: dict | None = 
     """Stream merged stdout/stderr and reap the complete process group on interruption."""
     log.parent.mkdir(parents=True, exist_ok=True)
     child_env = dict(os.environ if env is None else env)
-    child_env.setdefault('MPLBACKEND', 'Agg')
+    # Workers are non-interactive subprocesses.  A notebook's inline backend
+    # is not installed in their isolated virtual environments.
+    child_env['MPLBACKEND'] = 'Agg'
     child_env['PYTHONUNBUFFERED'] = '1'
     child_env.setdefault('MPLCONFIGDIR', str(log.parent / 'matplotlib'))
     child_env.setdefault('NUMBA_CACHE_DIR', str(log.parent / 'numba'))
