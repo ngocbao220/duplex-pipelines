@@ -32,16 +32,16 @@ _cache_lock = threading.Lock()
 
 
 def _canonical_export_device(device: str | torch.device) -> torch.device:
-    """Use the export artifact's canonical CUDA spelling on GPU 0.
+    """Use an indexed CUDA spelling for exported graph assertions.
 
-    DialogueSidon's graphs were exported with ``cuda`` (not ``cuda:0``).
-    PyTorch treats those as different devices for exported graph guards, even
-    though they select the same physical GPU.  Keep explicit nonzero GPUs
-    indexed so multi-GPU callers remain correct.
+    PyTorch materializes tensors moved to generic ``cuda`` on GPU 0 as
+    ``cuda:0``.  DialogueSidon's exported graph guards compare the spelling
+    strictly, so retarget the graph and all tensors to the explicit device.
+    Explicit nonzero GPUs remain unchanged.
     """
     requested = torch.device(device)
-    if requested.type == "cuda" and requested.index in {None, 0}:
-        return torch.device("cuda")
+    if requested.type == "cuda" and requested.index is None:
+        return torch.device("cuda:0")
     return requested
 
 

@@ -38,6 +38,7 @@ def test_export_device_retarget_rewrites_string_and_torch_device_literals():
     assert module.recompiled is True
 
 
-def test_gpu_zero_uses_dialoguesidon_export_canonical_cuda_device():
-    assert _canonical_export_device("cuda:0") == torch.device("cuda")
+def test_gpu_zero_uses_dialoguesidon_export_explicit_cuda_zero_device():
+    assert _canonical_export_device("cuda") == torch.device("cuda:0")
+    assert _canonical_export_device("cuda:0") == torch.device("cuda:0")
     assert _canonical_export_device("cuda:1") == torch.device("cuda:1")

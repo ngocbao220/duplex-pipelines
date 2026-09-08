@@ -6,7 +6,8 @@ import sys
 import time
 
 ANSI_RESET = "\033[0m"
-ANSI_GREEN = "\033[1;32m"
+# Normal green is visibly darker than bright/bold green in Kaggle terminals.
+ANSI_GREEN = "\033[0;32m"
 ANSI_YELLOW = "\033[1;33m"
 ANSI_RED = "\033[1;31m"
 
