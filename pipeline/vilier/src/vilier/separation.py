@@ -124,6 +124,34 @@ def detect_overlapping_pairs(segments: list[SpeakerSegment], overlap_threshold: 
     return pairs
 
 
+def preflight_overlap_separator(config: dict) -> None:
+    """Validate/download required overlap-separation weights before audio processing."""
+    if not config.get("enabled", False) or config.get("backend", "sepreformer") != "sepreformer":
+        return
+    model_name = config.get("model_name", "SepReformer_Base_WSJ0")
+    checkpoint_repo = config.get("checkpoint_repo", "")
+    try:
+        sepreformer_path = _resolve_sepreformer_path(config.get("sepreformer_path", "SepReformer"))
+        if not sepreformer_path.exists():
+            raise FileNotFoundError(f"SepReformer source directory not found: {sepreformer_path}")
+        _find_checkpoint_files(
+            sepreformer_path,
+            model_name,
+            checkpoint_repo=checkpoint_repo,
+            checkpoint_revision=config.get("checkpoint_revision", ""),
+        )
+    except FileNotFoundError as exc:
+        repo_hint = (
+            f"checkpoint_repo={checkpoint_repo!r} could not provide compatible weights"
+            if checkpoint_repo
+            else "set overlap_separation.checkpoint_repo to 'niobures/SepReformer' or copy trusted .pt/.pth weights"
+        )
+        raise FileNotFoundError(
+            f"Vilier preflight failed before diarization: SepReformer checkpoint for {model_name} is unavailable; "
+            f"{repo_hint}. {exc}"
+        ) from exc
+
+
 def load_overlap_separator(config: dict, dry_run: bool = False, warnings: list[str] | None = None):
     if not config.get("enabled", False):
         return None

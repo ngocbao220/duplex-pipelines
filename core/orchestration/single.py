@@ -29,7 +29,10 @@ def run_single(name: str, source: Path, output: Path, debug: bool, gt_a: Path | 
     rows = json.loads(result_path.read_text()) if result_path.exists() else []
     row = rows[0] if rows else {"status": "failed", "error": "worker did not write result"}
     if row.get("status") != "complete":
-        raise RuntimeError(row.get("error", f"worker exit={exit_code}"))
+        print(f"Failed: {row.get('error', f'worker exit={exit_code}')}\n"
+              f"-> run.json: {output / 'run.json'}\n"
+              f"-> worker log: {run_dir / name / 'worker.log'}", flush=True)
+        return exit_code or 1
     report = output / "benchmark.json"
     if gt_a and gt_b:
         score = benchmark.score_reference_sample({"key": output.name, "gt_speaker_1": str(gt_a), "gt_speaker_2": str(gt_b)}, output.parent, 16000, -40.0, -20.0)

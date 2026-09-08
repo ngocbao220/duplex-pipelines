@@ -98,8 +98,9 @@ def run_sample(pipeline, sample, output, config, code, adapter, force=False) -> 
                       rtf=elapsed / duration, metadata=metadata,
                       track_sha256=[sha256(path) for path in canonical])
     except Exception as exc:
-        traceback.print_exc()
+        trace = traceback.format_exc()
         result.update(status='failed', error=f'{type(exc).__name__}: {exc}',
-                      inference_seconds=time.perf_counter() - started)
+                      traceback=trace, inference_seconds=time.perf_counter() - started)
+        print(f"[{pipeline}] FAILED {sample['key']}: {type(exc).__name__}: {exc}", flush=True)
     write_json(output / 'run.json', result)
     return result

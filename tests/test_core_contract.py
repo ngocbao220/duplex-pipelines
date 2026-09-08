@@ -33,3 +33,18 @@ def test_core_report_uses_only_common_successes(tmp_path):
     result = comparison_report(rows, runtime, tmp_path / "comparison")
     assert result["common_keys"] == ["a"]
     assert json.loads((tmp_path / "comparison.json").read_text())["common_samples"] == 1
+
+
+def test_failed_sample_emits_one_concise_console_error_and_persists_traceback(tmp_path, capsys):
+    mixture = _wav(tmp_path / "mixture.wav")
+
+    def failing_adapter(source, output, config):
+        raise FileNotFoundError("checkpoint missing")
+
+    result = run_sample("vilier", {"key": "sample", "mixture": str(mixture)}, tmp_path / "output", {}, "code", failing_adapter)
+
+    captured = capsys.readouterr().out
+    assert result["status"] == "failed"
+    assert "FileNotFoundError: checkpoint missing" in result["traceback"]
+    assert "[vilier] FAILED sample" in captured
+    assert "Traceback" not in captured

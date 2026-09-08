@@ -72,8 +72,12 @@ def run_batch(request: dict, adapter=None) -> list[dict]:
             results.append(result)
             write_json(Path(request['results']), results)
             progress.update(1)
-            print(f"[{name}] Complete sample {sample['key']}: {result['status']}"
-                  f"{' (resumed)' if result.get('resumed') else ''} {result.get('error', '')}", flush=True)
+            if result["status"] == "complete":
+                print(f"[{name}] Complete sample {sample['key']}"
+                      f"{' (resumed)' if result.get('resumed') else ''}", flush=True)
+            else:
+                print(f"[{name}] Failed sample {sample['key']}; details: "
+                      f"{Path(request['pred_root']) / sample['key'] / 'run.json'}", flush=True)
     return results
 
 

@@ -11,9 +11,13 @@ from pathlib import Path
 
 def run(source: Path, output: Path, config: dict):
     """Run the fixed Vilier profile and normalize its native manifest to two tracks."""
+    from .separation import preflight_overlap_separator
     from . import cli
     from core.orchestration.clearvoice import IsolatedClearVoice
     from core.orchestration.contract import vilier_tracks
+
+    print("[vilier] Preflight: validating overlap-separation checkpoint", flush=True)
+    preflight_overlap_separator(config.get("overlap_separation", {}))
 
     original_loader = cli.load_overlap_separator
     helpers = []
