@@ -36,6 +36,11 @@ def _retarget_exported_module(module, device: torch.device):
     def retarget(value):
         if isinstance(value, torch.device):
             return device
+        # torch.export serializes device constants both as torch.device values
+        # and as strings.  The latter kept DialogueSidon's original "cuda"
+        # literal while chunks were deliberately moved to "cuda:0".
+        if isinstance(value, str) and value.startswith("cuda"):
+            return str(device)
         if isinstance(value, tuple):
             return tuple(retarget(item) for item in value)
         if isinstance(value, list):
