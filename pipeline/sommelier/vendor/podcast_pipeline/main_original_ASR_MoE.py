@@ -2503,6 +2503,42 @@ def export_segments_with_enhanced_audio(audio_info, segment_list, save_dir, audi
 
         # Save as MP3
         target_segment.export(file_path, format="mp3")
+
+
+def export_pre_asr_result(audio_info, segment_list, save_dir, audio_name, audio_duration,
+                          diarization_time, diarization_rt, separation_time,
+                          separation_rt, overlap_threshold):
+    """Persist the original separation result before optional ASR/LLM stages."""
+    export_segments_with_enhanced_audio(audio_info, segment_list, save_dir, audio_name)
+    cleaned_list = []
+    for item in segment_list:
+        clean_item = item.copy()
+        clean_item.pop("enhanced_audio", None)
+        for key, value in clean_item.items():
+            if hasattr(value, "item"):
+                clean_item[key] = value.item()
+        cleaned_list.append(clean_item)
+    output_data = {
+        "metadata": {
+            "sample_rate": int(cfg["entrypoint"]["SAMPLE_RATE"]),
+            "audio_duration_seconds": audio_duration,
+            "vad_sortformer": {"processing_time_seconds": diarization_time, "rt_factor": diarization_rt},
+            "sepreformer_separation": {
+                "processing_time_seconds": separation_time,
+                "rt_factor": separation_rt,
+                "overlap_threshold_seconds": overlap_threshold,
+                "enabled": True,
+            },
+            "asr_skipped": True,
+            "total_segments": len(cleaned_list),
+        },
+        "segments": cleaned_list,
+    }
+    final_path = os.path.join(save_dir, audio_name + ".json")
+    with open(final_path, "w", encoding="utf-8") as handle:
+        json.dump(output_data, handle, ensure_ascii=False, indent=2)
+    logger.info(f"Pre-ASR result saved to: {final_path}")
+    return final_path, segment_list
         
 def main_process(audio_path, save_path=None, audio_name=None,
                  do_vad = False,
@@ -2629,6 +2665,14 @@ def main_process(audio_path, save_path=None, audio_name=None,
             logger.info(f"SepReformer separation - Processing time: {separation_time:.2f}s, RT factor: {separation_rt:.4f}")
         else:
             logger.info("SepReformer overlap separation skipped (flag disabled)")
+
+        if args.until_pre_asr:
+            logger.info("Stopping after diarization and SepReformer as requested")
+            return export_pre_asr_result(
+                audio, segment_list, save_path, audio_name, audio_duration,
+                vad_sortformer_processing_time, vad_sortformer_rt, separation_time,
+                separation_rt, overlap_threshold,
+            )
             
         logger.info("Step 4: ASR (Automatic Speech Recognition)")
         if args.ASRMoE:
@@ -2945,6 +2989,11 @@ if __name__ == "__main__":
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Enable SepReformer for overlapping speech separation",
+    )
+    parser.add_argument(
+        "--until-pre-asr",
+        action="store_true",
+        help="Export diarization and separation tracks, then stop before ASR/LLM.",
     )
 
     parser.add_argument(

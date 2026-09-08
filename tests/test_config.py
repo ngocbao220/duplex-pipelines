@@ -79,3 +79,12 @@ def test_sommelier_lightning_load_compatibility_wrapper_accepts_weights_only():
     source = (root / "pipeline" / "sommelier" / "vendor" / "podcast_pipeline" / "main_original_ASR_MoE.py").read_text()
     assert "def _patched_load(path_or_url: Union[IO, str, Path], map_location=None, weights_only=None)" in source
     assert "torch.load(path_or_url, map_location=map_location, weights_only=False)" in source
+
+
+def test_sommelier_runner_stops_after_the_two_track_stage():
+    root = Path(__file__).resolve().parents[1]
+    runner = (root / "pipeline" / "sommelier" / "src" / "sommelier" / "runner.py").read_text()
+    vendor = (root / "pipeline" / "sommelier" / "vendor" / "podcast_pipeline" / "main_original_ASR_MoE.py").read_text()
+    assert '"--until-pre-asr"' in runner
+    assert "if args.until_pre_asr:" in vendor
+    assert "return export_pre_asr_result(" in vendor
