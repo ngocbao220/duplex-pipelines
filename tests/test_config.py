@@ -86,5 +86,7 @@ def test_sommelier_runner_stops_after_the_two_track_stage():
     runner = (root / "pipeline" / "sommelier" / "src" / "sommelier" / "runner.py").read_text()
     vendor = (root / "pipeline" / "sommelier" / "vendor" / "podcast_pipeline" / "main_original_ASR_MoE.py").read_text()
     assert '"--until-pre-asr"' in runner
+    assert '"--expected-speakers", "2"' in runner
     assert "if args.until_pre_asr:" in vendor
     assert "return export_pre_asr_result(" in vendor
+    assert "def constrain_speaker_inventory(" in vendor

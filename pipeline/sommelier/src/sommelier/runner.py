@@ -34,7 +34,7 @@ def run(source: Path, output: Path, config: dict):
     with tempfile.TemporaryDirectory(prefix="sommelier-config-") as temporary:
         config_path = Path(temporary) / "config.json"
         config_path.write_text(json.dumps(cfg), encoding="utf-8")
-        command = [sys.executable, str(vendor / "main_original_ASR_MoE.py"), "--input_folder_path", str(input_dir), "--config_path", str(config_path), "--sepreformer", "--no-demucs", "--no-ASRMoE", "--no-qwen3omni", "--until-pre-asr", "--LLM", "case_0", "--overlap_threshold", str(config.get("overlap_threshold", 1.0)), "--speaker-link-threshold", str(config.get("speaker_link_threshold", 0.75))]
+        command = [sys.executable, str(vendor / "main_original_ASR_MoE.py"), "--input_folder_path", str(input_dir), "--config_path", str(config_path), "--sepreformer", "--no-demucs", "--no-ASRMoE", "--no-qwen3omni", "--until-pre-asr", "--expected-speakers", "2", "--LLM", "case_0", "--overlap_threshold", str(config.get("overlap_threshold", 1.0)), "--speaker-link-threshold", str(config.get("speaker_link_threshold", 0.75))]
         subprocess.run(command, cwd=vendor, check=True)
     manifests = sorted(input_dir.rglob(f"{source.stem}.json"), key=lambda path: path.stat().st_mtime)
     if not manifests:

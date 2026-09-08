@@ -2355,6 +2355,53 @@ def align_speakers_across_chunks(
     return aligned_frames
 
 
+def constrain_speaker_inventory(segment_list, audio_info, embedder: Inference | None,
+                                expected_speakers: int) -> list[dict]:
+    """Cluster recording-level speaker IDs into the requested full-duplex inventory."""
+    speakers = sorted({segment["speaker"] for segment in segment_list})
+    if expected_speakers <= 0 or len(speakers) <= expected_speakers:
+        return segment_list
+    if embedder is None:
+        raise RuntimeError("Cannot constrain speaker inventory without pyannote embeddings")
+
+    centroids = []
+    for speaker in speakers:
+        embeddings = []
+        candidates = sorted(
+            (segment for segment in segment_list if segment["speaker"] == speaker),
+            key=lambda segment: float(segment["end"]) - float(segment["start"]),
+            reverse=True,
+        )
+        for segment in candidates[:3]:
+            embedding = _extract_speaker_embedding(
+                audio_info, segment["start"], segment["end"], embedder=embedder
+            )
+            if embedding is not None:
+                embeddings.append(embedding)
+        if not embeddings:
+            raise RuntimeError(f"Cannot embed diarization label {speaker} for two-speaker linking")
+        centroid = np.mean(embeddings, axis=0)
+        norm = np.linalg.norm(centroid)
+        if norm == 0:
+            raise RuntimeError(f"Invalid zero-norm embedding for diarization label {speaker}")
+        centroids.append(centroid / norm)
+
+    from sklearn.cluster import AgglomerativeClustering
+
+    labels = AgglomerativeClustering(
+        n_clusters=expected_speakers, metric="cosine", linkage="average"
+    ).fit_predict(np.stack(centroids))
+    label_by_speaker = dict(zip(speakers, labels))
+    first_start = {}
+    for segment in segment_list:
+        label = label_by_speaker[segment["speaker"]]
+        first_start[label] = min(first_start.get(label, float("inf")), float(segment["start"]))
+    ordered_labels = {label: index for index, label in enumerate(sorted(first_start, key=first_start.get))}
+    mapping = {speaker: f"SPEAKER_{ordered_labels[label]:02d}" for speaker, label in label_by_speaker.items()}
+    logger.info(f"Constrained {len(speakers)} diarization labels to {expected_speakers} full-duplex speakers: {mapping}")
+    return [{**segment, "speaker": mapping[segment["speaker"]]} for segment in segment_list]
+
+
 def prepare_diarization_chunks(
     audio_path,
     audio_info,
@@ -2665,6 +2712,11 @@ def main_process(audio_path, save_path=None, audio_name=None,
             logger.info(f"SepReformer separation - Processing time: {separation_time:.2f}s, RT factor: {separation_rt:.4f}")
         else:
             logger.info("SepReformer overlap separation skipped (flag disabled)")
+
+        if args.expected_speakers:
+            segment_list = constrain_speaker_inventory(
+                segment_list, audio, speaker_embedder, args.expected_speakers
+            )
 
         if args.until_pre_asr:
             logger.info("Stopping after diarization and SepReformer as requested")
@@ -2994,6 +3046,12 @@ if __name__ == "__main__":
         "--until-pre-asr",
         action="store_true",
         help="Export diarization and separation tracks, then stop before ASR/LLM.",
+    )
+    parser.add_argument(
+        "--expected-speakers",
+        type=int,
+        default=None,
+        help="Constrain recording-level diarization labels to this many speakers using embeddings.",
     )
 
     parser.add_argument(
