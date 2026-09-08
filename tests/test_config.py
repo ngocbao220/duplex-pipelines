@@ -64,3 +64,10 @@ def test_sommelier_defers_salm_import_when_asr_moe_is_disabled():
     import_statement = "from nemo.collections.speechlm2.models import SALM"
     assert source.count(import_statement) == 1
     assert source.index(import_statement) > source.index("if args.ASRMoE:")
+
+
+def test_sommelier_lightning_load_compatibility_wrapper_accepts_weights_only():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "pipeline" / "sommelier" / "vendor" / "podcast_pipeline" / "main_original_ASR_MoE.py").read_text()
+    assert "def _patched_load(path_or_url: Union[IO, str, Path], map_location=None, weights_only=None)" in source
+    assert "torch.load(path_or_url, map_location=map_location, weights_only=False)" in source

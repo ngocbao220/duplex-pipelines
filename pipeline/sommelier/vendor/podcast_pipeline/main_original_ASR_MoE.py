@@ -11,7 +11,7 @@ from typing import Union, IO, Any
 
 _original_load = cloud_io._load
 
-def _patched_load(path_or_url: Union[IO, str, Path], map_location=None) -> Any:
+def _patched_load(path_or_url: Union[IO, str, Path], map_location=None, weights_only=None) -> Any:
     """Patched version of lightning_fabric's _load that uses weights_only=False for pyannote compatibility"""
     if not isinstance(path_or_url, (str, Path)):
         return torch.load(path_or_url, map_location=map_location, weights_only=False)
