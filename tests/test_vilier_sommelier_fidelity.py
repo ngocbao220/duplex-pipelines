@@ -10,7 +10,7 @@ import pytest
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "pipeline" / "vilier" / "src"
 sys.path.insert(0, str(SOURCE_ROOT))
 
-from vilier.diarization import build_silence_diarization_chunks  # noqa: E402
+from vilier.diarization import SortformerDiarizer, build_silence_diarization_chunks  # noqa: E402
 from vilier.preprocess import sommelier_normalize  # noqa: E402
 from vilier.schema import SpeakerSegment  # noqa: E402
 from vilier.separation import PyannoteOverlapAssigner, apply_overlap_separation  # noqa: E402
@@ -43,6 +43,12 @@ def test_silence_chunking_cuts_at_silence_midpoint_and_preserves_source_time(tmp
 
     assert [(chunk["source_start"], chunk["source_end"]) for chunk in chunks] == [(0.0, 3.0), (3.0, 10.0)]
     assert chunks[0]["mapping"] == [{"chunk_start": 0.0, "chunk_end": 3.0, "source_start": 0.0, "source_end": 3.0}]
+
+
+def test_sortformer_initializes_configured_speaker_inventory_before_chunk_clustering():
+    diarizer = SortformerDiarizer({"num_speakers": 2}, dry_run=True)
+
+    assert diarizer.num_speakers == 2
 
 
 def test_embedding_assignment_replaces_energy_heuristic_for_overlap_source_order():

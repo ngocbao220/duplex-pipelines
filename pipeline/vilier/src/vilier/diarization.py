@@ -153,6 +153,10 @@ class SortformerDiarizer:
     def __init__(self, config: dict, dry_run: bool = False):
         self.config = config
         self.dry_run = dry_run
+        requested_speakers = config.get("num_speakers")
+        self.num_speakers = None if requested_speakers is None else int(requested_speakers)
+        if self.num_speakers is not None and self.num_speakers < 1:
+            raise ValueError("diarization.num_speakers must be positive")
         self.nemo_log_level = str(config.get("nemo_log_level", "WARNING")).upper()
         self.resolved_device = "dry-run" if dry_run else ""
         self.speaker_linking = {}
