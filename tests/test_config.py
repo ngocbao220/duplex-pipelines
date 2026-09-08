@@ -52,6 +52,12 @@ def test_sommelier_runtime_pins_upstream_torch_compatibility_set():
     assert {"torch==2.7.1", "torchaudio==2.7.1", "torchmetrics==1.7.4"} <= dependencies
 
 
+def test_sommelier_runtime_pins_hub_version_that_accepts_use_auth_token():
+    root = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((root / "pipeline" / "sommelier" / "pyproject.toml").read_text())
+    assert "huggingface-hub==0.33.4" in set(config["project"]["dependencies"])
+
+
 def test_sommelier_defers_salm_import_when_asr_moe_is_disabled():
     root = Path(__file__).resolve().parents[1]
     source = (root / "pipeline" / "sommelier" / "vendor" / "podcast_pipeline" / "main_original_ASR_MoE.py").read_text()
