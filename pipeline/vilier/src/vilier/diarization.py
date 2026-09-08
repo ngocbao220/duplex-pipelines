@@ -111,6 +111,44 @@ def _cosine_similarity(first: np.ndarray, second: np.ndarray) -> float:
     return float(np.dot(first, second) / denominator) if denominator else -1.0
 
 
+def _constrain_global_speakers(
+    labels: list[tuple[int, str]], embeddings: list[np.ndarray], expected_speakers: int
+) -> tuple[dict[tuple[int, str], str], list[dict]]:
+    """Cluster local diarization labels into the configured recording-level inventory."""
+    if len(labels) < expected_speakers:
+        raise ValueError(
+            f"Diarization found only {len(labels)} embeddable labels; expected {expected_speakers} speakers"
+        )
+    vectors = np.stack(embeddings)
+    if not np.all(np.linalg.norm(vectors, axis=1)):
+        raise ValueError("Cannot cluster zero-norm speaker embeddings")
+    if len(labels) == expected_speakers:
+        clusters = np.arange(expected_speakers)
+    else:
+        from sklearn.cluster import AgglomerativeClustering
+
+        clusters = AgglomerativeClustering(
+            n_clusters=expected_speakers, metric="cosine", linkage="average"
+        ).fit_predict(vectors)
+    first_index = {cluster: next(index for index, value in enumerate(clusters) if value == cluster)
+                   for cluster in set(clusters)}
+    cluster_ids = {cluster: index for index, cluster in enumerate(sorted(first_index, key=first_index.get))}
+    mapping = {
+        label: f"SPEAKER_{cluster_ids[cluster]:02d}"
+        for label, cluster in zip(labels, clusters)
+    }
+    links = [
+        {
+            "chunk_index": chunk_index,
+            "local_speaker": local_speaker,
+            "global_speaker": mapping[(chunk_index, local_speaker)],
+            "similarity": None,
+        }
+        for chunk_index, local_speaker in labels
+    ]
+    return mapping, links
+
+
 class SortformerDiarizer:
     def __init__(self, config: dict, dry_run: bool = False):
         self.config = config
@@ -145,7 +183,7 @@ class SortformerDiarizer:
             chunk_segments = self._diarize_audio(chunk["path"])
             chunk_results.append((chunk, chunk_segments))
 
-        if total > 1:
+        if total > 1 or self.num_speakers is not None:
             if progress_callback is not None:
                 progress_callback(total, total, "clustering global speakers")
             global_mapping, self.speaker_linking = self._cluster_local_speakers(chunk_results)
@@ -240,6 +278,25 @@ class SortformerDiarizer:
                 "reason": "No speaker audio was available for embedding extraction.",
                 "links": [],
                 "embeddings": [],
+            }
+
+        if self.num_speakers is not None:
+            expected_labels = {
+                (chunk_idx, segment.speaker)
+                for chunk_idx, (_, chunk_segments) in enumerate(chunk_results, start=1)
+                for segment in chunk_segments
+            }
+            embedded_labels = set(labels)
+            if missing := expected_labels - embedded_labels:
+                raise RuntimeError(f"Could not extract embeddings for diarization labels: {sorted(missing)}")
+            mapping, links = _constrain_global_speakers(labels, embeddings_list, self.num_speakers)
+            return mapping, {
+                "strategy": "constrained_ecapa_agglomerative_clustering",
+                "embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
+                "similarity": "cosine",
+                "expected_speakers": self.num_speakers,
+                "links": links,
+                "embeddings": embedding_records,
             }
             
         threshold = float(self.config.get("speaker_link_threshold", 0.75))
