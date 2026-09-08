@@ -25,6 +25,7 @@ def apply_overlap_separation(
     overlap_threshold: float,
     output_dir: Path | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    speaker_assigner=None,
 ) -> dict:
     if separator is None:
         return {"segment_audio": {}, "overlap_regions": []}
@@ -35,6 +36,11 @@ def apply_overlap_separation(
 
     separated_regions: dict[str, list[dict]] = {segment.id: [] for segment in segments}
     overlap_regions = []
+    reference_embeddings = (
+        speaker_assigner.reference_embeddings(segments, waveform, sample_rate, pairs)
+        if speaker_assigner is not None
+        else {}
+    )
     total = len(pairs)
     for pair_idx, pair in enumerate(pairs, start=1):
         if progress_callback is not None:
@@ -50,9 +56,17 @@ def apply_overlap_separation(
         src1, src2 = separator.separate(overlap_audio, sample_rate)
         src1 = _match_length(np.asarray(src1, dtype=np.float32), len(overlap_audio))
         src2 = _match_length(np.asarray(src2, dtype=np.float32), len(overlap_audio))
-        seg1_audio, seg2_audio = _assign_sources_by_energy(pair["seg1"], pair["seg2"], src1, src2)
-        seg1_audio = _match_target_rms(seg1_audio, _segment_non_overlap_rms(pair["seg1"], waveform, sample_rate, pairs) or _rms(overlap_audio) * 0.7)
-        seg2_audio = _match_target_rms(seg2_audio, _segment_non_overlap_rms(pair["seg2"], waveform, sample_rate, pairs) or _rms(overlap_audio) * 0.7)
+        if speaker_assigner is None:
+            seg1_audio, seg2_audio = _assign_sources_by_energy(pair["seg1"], pair["seg2"], src1, src2)
+            seg1_audio = _match_target_rms(seg1_audio, _segment_non_overlap_rms(pair["seg1"], waveform, sample_rate, pairs) or _rms(overlap_audio) * 0.7)
+            seg2_audio = _match_target_rms(seg2_audio, _segment_non_overlap_rms(pair["seg2"], waveform, sample_rate, pairs) or _rms(overlap_audio) * 0.7)
+        else:
+            seg1_audio, seg2_audio = speaker_assigner.assign(
+                pair["seg1"], pair["seg2"], src1, src2, sample_rate, reference_embeddings
+            )
+            # Original Sommelier matches both sources to the overlap mixture.
+            seg1_audio = _match_target_rms(seg1_audio, _rms(overlap_audio))
+            seg2_audio = _match_target_rms(seg2_audio, _rms(overlap_audio))
 
         separated_regions[pair["seg1"].id].append({"start": start, "end": end, "audio": seg1_audio})
         separated_regions[pair["seg2"].id].append({"start": start, "end": end, "audio": seg2_audio})
@@ -69,6 +83,78 @@ def apply_overlap_separation(
         segment_audio[segment.id] = _reconstruct_segment_audio(waveform, sample_rate, segment, regions)
 
     return {"segment_audio": segment_audio, "overlap_regions": overlap_regions}
+
+
+def load_overlap_speaker_assigner(config: dict, dry_run: bool = False):
+    """Load Sommelier's pyannote reference-embedding assigner for SepReformer."""
+    if not config.get("enabled", False) or config.get("backend", "sepreformer") != "sepreformer":
+        return None
+    if dry_run:
+        return None
+    return PyannoteOverlapAssigner(
+        model_name=str(config.get("speaker_embedding_model", "pyannote/embedding")),
+        device=str(config.get("device", "auto")),
+        min_seconds=float(config.get("speaker_embedding_min_seconds", 0.5)),
+    )
+
+
+class PyannoteOverlapAssigner:
+    """Assign SepReformer source order with Sommelier's reference embeddings."""
+    def __init__(self, model_name: str, device: str = "auto", min_seconds: float = 0.5):
+        import torch
+        from pyannote.audio import Model
+
+        self.torch = torch
+        self.min_seconds = min_seconds
+        self.resolved_device = resolve_auto_device(torch, device, warn_label="overlap_separation.device")
+        token = os.environ.get("HUGGINGFACE_TOKEN") or os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+        self.model = Model.from_pretrained(model_name, token=token) if token else Model.from_pretrained(model_name)
+        self.model = self.model.to(self.resolved_device)
+        self.model.eval()
+
+    def _embedding(self, audio: np.ndarray, sample_rate: int) -> np.ndarray | None:
+        import librosa
+
+        source = np.asarray(audio, dtype=np.float32)
+        if sample_rate != 16000:
+            source = librosa.resample(source, orig_sr=sample_rate, target_sr=16000)
+        if len(source) < int(self.min_seconds * 16000):
+            return None
+        with self.torch.inference_mode():
+            value = self.model(self.torch.tensor(source, dtype=self.torch.float32).unsqueeze(0).to(self.resolved_device))
+        if hasattr(value, "detach"):
+            value = value.detach().cpu().numpy()
+        return np.asarray(value, dtype=np.float32).reshape(-1)
+
+    def reference_embeddings(self, segments: list[SpeakerSegment], waveform: np.ndarray, sample_rate: int, pairs: list[dict]) -> dict[str, np.ndarray]:
+        involved = {segment.id for pair in pairs for segment in (pair["seg1"], pair["seg2"])}
+        references = {}
+        for segment in segments:
+            if segment.id in involved or segment.speaker in references or segment.end - segment.start < 2.0:
+                continue
+            audio = waveform[int(segment.start * sample_rate) : int(segment.end * sample_rate)]
+            embedding = self._embedding(audio, sample_rate)
+            if embedding is not None:
+                references[segment.speaker] = embedding
+        return references
+
+    def assign(self, seg1: SpeakerSegment, seg2: SpeakerSegment, src1: np.ndarray, src2: np.ndarray, sample_rate: int, references: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+        embedding = self._embedding(src1, sample_rate)
+        candidates = {speaker: references[speaker] for speaker in (seg1.speaker, seg2.speaker) if speaker in references}
+        # Sommelier's short-audio fallback chooses the first diarized speaker.
+        if embedding is None:
+            return src1, src2
+        # Its identity routine returns no match when no reference exists; the
+        # caller consequently assigns source one to the second speaker.
+        if not candidates:
+            return src2, src1
+        speaker = max(candidates, key=lambda label: _cosine_similarity(embedding, candidates[label]))
+        return (src1, src2) if speaker == seg1.speaker else (src2, src1)
+
+
+def _cosine_similarity(first: np.ndarray, second: np.ndarray) -> float:
+    denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
+    return float(np.dot(first, second) / denominator) if denominator else -1.0
 
 
 def _overlap_region_record(pair_idx: int, pair: dict, start: float, end: float) -> dict:

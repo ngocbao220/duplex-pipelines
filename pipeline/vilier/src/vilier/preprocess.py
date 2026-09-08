@@ -38,6 +38,27 @@ def load_mono(path: Path, sample_rate: int) -> tuple[np.ndarray, int]:
     return np.asarray(data, dtype=np.float32), sample_rate
 
 
+def sommelier_normalize(waveform: np.ndarray) -> np.ndarray:
+    """Apply the waveform-normalization invariant used by original Sommelier.
+
+    Sommelier first applies a bounded dBFS gain and then peak-normalizes the
+    float waveform.  The latter makes the bounded gain algebraically cancel
+    for non-silent audio, so keeping this operation here preserves the audio
+    invariant without making decode behaviour depend on pydub.
+    """
+    normalized = np.asarray(waveform, dtype=np.float32).copy()
+    peak = float(np.max(np.abs(normalized))) if normalized.size else 0.0
+    if peak > 0.0:
+        normalized /= peak
+    return normalized
+
+
+def load_sommelier_mono(path: Path, sample_rate: int) -> tuple[np.ndarray, int]:
+    """Decode, resample and peak-normalize one mono Sommelier input."""
+    waveform, resolved_rate = load_mono(path, sample_rate)
+    return sommelier_normalize(waveform), resolved_rate
+
+
 def _load_mono_ffmpeg(path: Path, sample_rate: int) -> tuple[np.ndarray, int]:
     command = [
         "ffmpeg",

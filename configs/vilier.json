@@ -26,7 +26,9 @@
       "num_speakers": 2,
       "nemo_log_level": "ERROR",
     "min_duration_seconds": 0.25,
-    "max_chunk_seconds": 180.0
+    "max_chunk_seconds": 120.0,
+    "min_silence_seconds": 0.3,
+    "speaker_link_threshold": 0.75
   },
   "asr": {
     "_model_replacement_comment": "Change model to replace ASR model. Keep backend=phowhisper_local for local PhoWhisper-compatible Transformers models.",
@@ -73,6 +75,8 @@
     "backend": "sepreformer",
     "model_name": "SepReformer_Base_WSJ0",
     "device": "auto",
-    "overlap_threshold_seconds": 0.2
+    "overlap_threshold_seconds": 1.0,
+    "speaker_embedding_model": "pyannote/embedding",
+    "speaker_embedding_min_seconds": 0.5
   }
 }

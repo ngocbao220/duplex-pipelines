@@ -106,6 +106,11 @@ def _speaker_embedding_record(chunk: dict, chunk_idx: int, speaker: str, embeddi
     }
 
 
+def _cosine_similarity(first: np.ndarray, second: np.ndarray) -> float:
+    denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
+    return float(np.dot(first, second) / denominator) if denominator else -1.0
+
+
 class SortformerDiarizer:
     def __init__(self, config: dict, dry_run: bool = False):
         self.config = config
@@ -164,8 +169,6 @@ class SortformerDiarizer:
         import torch
         import torchaudio
         from speechbrain.inference.speaker import EncoderClassifier
-        from scipy.cluster.hierarchy import linkage, fcluster
-        from scipy.spatial.distance import pdist
         import numpy as np
 
         device = resolve_torch_device(torch, self.config.get("device", "auto")) or "cpu"
@@ -239,41 +242,50 @@ class SortformerDiarizer:
                 "embeddings": [],
             }
             
-        X = np.stack(embeddings_list)
-        if len(X) < 2:
-            return {}, {
-                "strategy": "single_embedding",
-                "embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
-                "links": [],
-                "embeddings": embedding_records,
-            }
-
-        distances = pdist(X, metric='cosine')
-        Z = linkage(distances, method='average')
-        
-        # 0.6 is a standard threshold for ECAPA-TDNN cosine distance
-        cluster_labels = fcluster(Z, t=0.6, criterion='distance')
-        
+        threshold = float(self.config.get("speaker_link_threshold", 0.75))
         mapping = {}
         links = []
-        for (chunk_idx, old_spk), cluster_id in zip(labels, cluster_labels):
-            global_speaker = f"SPEAKER_{cluster_id - 1:02d}"
+        centroids: dict[str, np.ndarray] = {}
+        counts: dict[str, int] = {}
+        next_global = 0
+        used_in_chunk: set[str] = set()
+        active_chunk = None
+        for (chunk_idx, old_spk), embedding in zip(labels, embeddings_list):
+            if active_chunk != chunk_idx:
+                active_chunk = chunk_idx
+                used_in_chunk = set()
+            candidates = [
+                (label, _cosine_similarity(embedding, centroid))
+                for label, centroid in centroids.items()
+                if label not in used_in_chunk
+            ]
+            best_label, similarity = max(candidates, key=lambda item: item[1], default=(None, -1.0))
+            if best_label is not None and similarity >= threshold:
+                global_speaker = best_label
+                count = counts[global_speaker]
+                centroids[global_speaker] = (centroids[global_speaker] * count + embedding) / (count + 1)
+                counts[global_speaker] = count + 1
+            else:
+                global_speaker = f"SPEAKER_{next_global:02d}"
+                next_global += 1
+                centroids[global_speaker] = embedding
+                counts[global_speaker] = 1
             mapping[(chunk_idx, old_spk)] = global_speaker
+            used_in_chunk.add(global_speaker)
             links.append(
                 {
                     "chunk_index": chunk_idx,
                     "local_speaker": old_spk,
                     "global_speaker": global_speaker,
-                    "cluster_id": int(cluster_id),
+                    "similarity": round(similarity, 6),
                 }
             )
             
         return mapping, {
-            "strategy": "ecapa_chunk_clustering",
+            "strategy": "sequential_ecapa_centroid_linking",
             "embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
-            "distance": "cosine",
-            "cluster_method": "average",
-            "threshold": 0.6,
+            "similarity": "cosine",
+            "threshold": threshold,
             "links": links,
             "embeddings": embedding_records,
         }
@@ -902,6 +914,97 @@ def build_diarization_chunks(
 
     flush()
     return chunks
+
+
+def build_silence_diarization_chunks(
+    waveform: np.ndarray,
+    sample_rate: int,
+    speech_segments: list[dict],
+    output_dir: Path,
+    max_chunk_seconds: float = 120.0,
+    min_silence_seconds: float = 0.3,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> list[dict]:
+    """Build original-timeline Sortformer chunks using Sommelier silence cuts.
+
+    Unlike the former VAD-compressed chunks, each output keeps every sample
+    between its source start/end.  This is the contract used by Sommelier's
+    Sortformer path and makes a chunk timestamp a direct source timestamp.
+    """
+    duration = len(waveform) / sample_rate if sample_rate else 0.0
+    silence_intervals = _silence_intervals(speech_segments, duration, min_silence_seconds)
+    ranges = _sommelier_chunk_ranges(duration, silence_intervals, max_chunk_seconds)
+    chunks_dir = output_dir / "diarization_chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    chunks = []
+    for idx, (start, end) in enumerate(ranges, start=1):
+        if progress_callback is not None:
+            progress_callback(idx, len(ranges), f"chunk_{idx}")
+        start_idx = max(0, int(round(start * sample_rate)))
+        end_idx = min(len(waveform), int(round(end * sample_rate)))
+        audio = waveform[start_idx:end_idx]
+        path = chunks_dir / f"chunk_{idx}.wav"
+        write_wav(path, audio, sample_rate)
+        chunk_duration = round(len(audio) / sample_rate, 6) if sample_rate else 0.0
+        chunks.append(
+            {
+                "id": f"chunk_{idx}",
+                "path": path,
+                "audio": relative_path(path, output_dir),
+                "duration": chunk_duration,
+                "source_start": round(start, 6),
+                "source_end": round(end, 6),
+                "mapping": [{
+                    "chunk_start": 0.0,
+                    "chunk_end": chunk_duration,
+                    "source_start": round(start, 6),
+                    "source_end": round(end, 6),
+                }],
+            }
+        )
+    return chunks
+
+
+def _silence_intervals(speech_segments: list[dict], duration: float, min_silence: float) -> list[tuple[float, float]]:
+    ordered = sorted(
+        (
+            (max(0.0, min(duration, float(item["start"]))), max(0.0, min(duration, float(item["end"]))))
+            for item in speech_segments
+        ),
+        key=lambda item: item[0],
+    )
+    if not ordered:
+        return [(0.0, duration)] if duration >= min_silence else []
+    silence = []
+    previous_end = 0.0
+    for start, end in ordered:
+        if end <= start:
+            continue
+        if start - previous_end >= min_silence:
+            silence.append((previous_end, start))
+        previous_end = max(previous_end, end)
+    if duration - previous_end >= min_silence:
+        silence.append((previous_end, duration))
+    return silence
+
+
+def _sommelier_chunk_ranges(duration: float, silence_intervals: list[tuple[float, float]], max_duration: float) -> list[tuple[float, float]]:
+    if duration <= 0.0:
+        return []
+    if duration <= max_duration:
+        return [(0.0, duration)]
+    cut_points = sorted((start + end) / 2.0 for start, end in silence_intervals)
+    ranges = []
+    start = 0.0
+    while start < duration:
+        limit = min(start + max_duration, duration)
+        candidates = [point for point in cut_points if start < point <= limit]
+        end = candidates[-1] if candidates else limit
+        if end <= start:
+            end = limit
+        ranges.append((start, end))
+        start = end
+    return ranges
 
 
 def _configure_nemo_logging(level_name: str) -> None:

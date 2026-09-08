@@ -35,6 +35,14 @@ Vilier cố định Silero VAD, Sortformer `nvidia/diar_sortformer_4spk-v1`,
 overlap-only SepReformer `SepReformer_Base_WSJ0`, concat và cosine matching.
 Không có cờ đổi model Vilier.
 
+Profile Vilier dùng để tạo full-duplex giữ đường xử lý trước-track của
+Sommelier: peak-normalized mono 16 kHz, silence-preserving Sortformer chunks
+tối đa 120 giây, sequential cosine speaker linking, và SepReformer source
+assignment bằng `pyannote/embedding`. Job dừng trước ASR/LLM và chỉ trả hai
+WAV mono full-duration: `outputs/vilier/speakerA.wav` và
+`outputs/vilier/speakerB.wav`. Nếu diarization không có đúng hai speaker,
+job fail thay vì tạo track giả.
+
 SepReformer cần weights `.pt`/`.pth` thật, không phải Git-LFS pointer. Trên
 Kaggle, attach dataset weights rồi đặt `VILIER_SEPREFORMER_CHECKPOINT` tới file
 checkpoint trước khi chạy Vilier; preflight sẽ kiểm tra file này trước

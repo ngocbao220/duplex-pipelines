@@ -15,11 +15,11 @@ from pathlib import Path
 from typing import TextIO
 
 from .asr import export_speaker_asr_audio, load_asr_runner, transcribe_asr_segments, write_transcript_json
-from .preprocess import iter_audio_files, load_mono, write_wav
+from .preprocess import iter_audio_files, load_sommelier_mono, write_wav
 from .diarization import (
     DiariZenDiarizer,
     PyannotePixitDiarizer,
-    build_diarization_chunks,
+    build_silence_diarization_chunks,
     build_speaker_linking_artifact,
     load_diarizer,
     write_speaker_linking_artifact,
@@ -27,7 +27,7 @@ from .diarization import (
 from .labeling import label_transcripts, load_labeling_runner, resolve_state_dir, write_state_outputs
 from .model_options import add_model_option_arguments, apply_model_overrides
 from .music import apply_music_separation, load_music_separator
-from .separation import apply_overlap_separation, load_overlap_separator
+from .separation import apply_overlap_separation, load_overlap_separator, load_overlap_speaker_assigner
 from .schema import relative_path
 from .reconstruct import annotate_overlaps, export_audacity_labels, export_segments_and_tracks, write_manifest
 from .tree_log import kv, log_tree, section, write_tree_log
@@ -250,7 +250,7 @@ def process_one(
         current_step = "preprocess"
         if progress is not None:
             progress.start(audio_id, current_step)
-        waveform, sample_rate = load_mono(audio_path, sample_rate)
+        waveform, sample_rate = load_sommelier_mono(audio_path, sample_rate)
         standardized_path = output_dir / "audio.standardized.wav"
         write_wav(standardized_path, waveform, sample_rate)
         sections.append(
@@ -308,13 +308,14 @@ def process_one(
         if progress is not None:
             progress.start(audio_id, current_step)
         diarization_config = config.get("diarization", {})
-        max_chunk_seconds = float(diarization_config.get("max_chunk_seconds", 180.0))
-        diarization_chunks = build_diarization_chunks(
+        max_chunk_seconds = float(diarization_config.get("max_chunk_seconds", 120.0))
+        diarization_chunks = build_silence_diarization_chunks(
             waveform,
             sample_rate,
             vad_segments,
             output_dir,
-            max_chunk_seconds,
+            max_chunk_seconds=max_chunk_seconds,
+            min_silence_seconds=float(diarization_config.get("min_silence_seconds", 0.3)),
             progress_callback=(
                 (lambda current, total, label: progress.item(audio_id, current_step, current, total, label))
                 if progress is not None
@@ -426,6 +427,7 @@ def process_one(
         overlap_config = config.get("overlap_separation", {})
         overlap_warnings = []
         separator = load_overlap_separator(overlap_config, dry_run=dry_run, warnings=overlap_warnings)
+        speaker_assigner = load_overlap_speaker_assigner(overlap_config, dry_run=dry_run)
         overlap_result = apply_overlap_separation(
             speaker_waveform,
             sample_rate,
@@ -438,12 +440,14 @@ def process_one(
                 if progress is not None
                 else None
             ),
+            speaker_assigner=speaker_assigner,
         )
         overlap_attrs = [
             kv("enabled", bool(overlap_config.get("enabled", False))),
             kv("backend", overlap_config.get("backend", "")),
             kv("model", overlap_config.get("model_name", overlap_config.get("model", ""))),
             kv("device", getattr(separator, "resolved_device", getattr(separator, "device", overlap_config.get("device", "")))),
+            kv("speaker_assignment", "pyannote_embedding" if speaker_assigner is not None else "energy_fallback"),
             kv("regions", len(overlap_result["overlap_regions"])),
             kv("enhanced_segments", len(overlap_result["segment_audio"])),
         ]
