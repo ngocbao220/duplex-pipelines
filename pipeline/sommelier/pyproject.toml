@@ -6,6 +6,9 @@ dependencies = [
   "duplex-pipelines", "numpy", "soundfile", "pydub", "librosa",
   "torch", "torchaudio", "pyannote.audio==3.3.2", "speechbrain",
   "nemo_toolkit[asr]", "panns-inference", "loguru", "tqdm",
+  "lightning==2.4.0", "openai==1.97.1", "tritony==0.0.20",
+  "pandas==2.3.1", "requests==2.32.4", "g2pk",
+  "onnxruntime==1.22.1", "faster-whisper==1.1.1", "whisperx==3.4.2",
 ]
 
 [build-system]

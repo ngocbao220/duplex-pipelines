@@ -10,6 +10,7 @@ không xung đột dependency DuplexChat hoặc Cholimex.
 UV_CACHE_DIR=.uv-cache uv sync --project pipeline/vilier
 UV_CACHE_DIR=.uv-cache uv sync --project pipeline/duplexchat
 UV_CACHE_DIR=.uv-cache uv sync --project pipeline/cholimex
+UV_CACHE_DIR=.uv-cache uv sync --project pipeline/sommelier
 ```
 
 Vilier cần resolve Sortformer/NeMo lần đầu. Sau khi dependency thay đổi, chạy
@@ -20,6 +21,7 @@ truy cập PyPI trước khi dùng lockfile trong automation.
 
 ```bash
 uv run --project pipeline/vilier python -m vilier single --input input.wav --output-dir outputs/vilier --debug
+uv run --project pipeline/sommelier python -m sommelier single --input input.wav --output-dir outputs/sommelier --debug
 uv run --project pipeline/cholimex python -m cholimex single --input input.wav --output-dir outputs/cholimex --gt-speaker-a gt_a.wav --gt-speaker-b gt_b.wav
 uv run --project pipeline/duplexchat python -m duplexchat otospeech --max-gb 1 --max-samples 1 --max-seconds 60
 uv run --project . python cli.py compare-otospeech --max-gb 1 --max-samples 1 --max-seconds 60
@@ -47,3 +49,10 @@ SepReformer cần weights `.pt`/`.pth` thật, không phải Git-LFS pointer. Tr
 Kaggle, attach dataset weights rồi đặt `VILIER_SEPREFORMER_CHECKPOINT` tới file
 checkpoint trước khi chạy Vilier; preflight sẽ kiểm tra file này trước
 diarization.
+
+Sommelier là bản gốc được vendor riêng, chỉ chạy bằng `single` (không thuộc
+`compare-otospeech --all`). Nó cũng cần `VILIER_SEPREFORMER_CHECKPOINT` và
+`HUGGINGFACE_TOKEN` (hoặc `HF_TOKEN`). Chạy `uv sync --project
+pipeline/sommelier` sau mỗi lần cập nhật dependency; code gốc import `openai`,
+`onnxruntime`, `faster-whisper`, và `whisperx` ngay khi khởi động, dù các nhánh
+ASR/LLM tương ứng đang bị tắt.
