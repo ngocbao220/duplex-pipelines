@@ -10,6 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "duple
 
 from duplexchat.separation_backend import _canonical_export_device, _retarget_exported_module  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "cholimex" / "src"))
+
+from cholimex.separation import _canonical_export_device as cholimex_export_device  # noqa: E402
+
 
 class _Node:
     def __init__(self) -> None:
@@ -42,3 +46,8 @@ def test_gpu_zero_uses_dialoguesidon_export_explicit_cuda_zero_device():
     assert _canonical_export_device("cuda") == torch.device("cuda:0")
     assert _canonical_export_device("cuda:0") == torch.device("cuda:0")
     assert _canonical_export_device("cuda:1") == torch.device("cuda:1")
+
+
+def test_cholimex_uses_the_same_explicit_gpu_zero_export_device():
+    assert cholimex_export_device("cuda") == torch.device("cuda:0")
+    assert cholimex_export_device("cuda:1") == torch.device("cuda:1")

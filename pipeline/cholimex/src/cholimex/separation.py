@@ -31,11 +31,21 @@ _cache: dict = {}
 _cache_lock = threading.Lock()
 
 
+def _canonical_export_device(device: str | torch.device) -> torch.device:
+    """Use an explicit CUDA index for DialogueSidon's export guards."""
+    requested = torch.device(device)
+    if requested.type == "cuda" and requested.index is None:
+        return torch.device("cuda:0")
+    return requested
+
+
 def _retarget_exported_module(module, device: torch.device):
     """Replace device literals captured by a torch.export graph."""
     def retarget(value):
         if isinstance(value, torch.device):
             return device
+        if isinstance(value, str) and value.startswith("cuda"):
+            return str(device)
         if isinstance(value, tuple):
             return tuple(retarget(item) for item in value)
         if isinstance(value, list):
@@ -108,7 +118,7 @@ def _load_dialoguesidon_models(device: str = "cuda", model_id: str | None = None
         with open(paths["metadata.json"]) as fp:
             meta = json.load(fp)
 
-        torch_device = torch.device(resolved)
+        torch_device = _canonical_export_device(resolved)
 
         # Enable TF32 for faster float32 matmuls on Ampere+ GPUs
         torch.backends.cuda.matmul.allow_tf32 = True
