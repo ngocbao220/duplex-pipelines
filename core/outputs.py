@@ -119,6 +119,15 @@ def save_wav(path: Path, wav: torch.Tensor, sample_rate: int) -> Path:
     return path
 
 
+def save_stereo_wav(path: Path, first_channel: torch.Tensor, second_channel: torch.Tensor, sample_rate: int) -> Path:
+    """Persist two timeline-aligned mono sources as one channel-ordered WAV."""
+    if first_channel.ndim != 2 or second_channel.ndim != 2 or (first_channel.shape[0], second_channel.shape[0]) != (1, 1):
+        raise ValueError("Stereo output requires two mono waveforms")
+    if first_channel.shape[-1] != second_channel.shape[-1]:
+        raise ValueError("Stereo output channels must have the same timeline")
+    return save_wav(path, torch.cat([first_channel, second_channel], dim=0), sample_rate)
+
+
 def write_diarization_phase(
     run_dir: Path,
     segments: Iterable[dict],

@@ -1,7 +1,7 @@
-"""Purpose: Execute DuplexChat preprocessing through two-track export.
+"""Purpose: Execute DuplexChat preprocessing through stereo export.
 
 Inputs: One mixture path, phase/model settings, output location.
-Outputs: Speaker A/B WAV files and inspectable phase artifacts.
+Outputs: One stereo WAV file and inspectable phase artifacts.
 """
 import torch
 from pathlib import Path
@@ -10,7 +10,7 @@ from .preprocess import prepare_input
 from .diarization import diarize
 from .dialogues import summarize
 from .separation import separate, separate_waveform
-from .reconstruct import write_tracks
+from .reconstruct import write_stereo
 from .audio import load_wav_tensor
 from .separation_backend import load_separation_models
 
@@ -106,34 +106,32 @@ def run_single_audio(
                 directory.mkdir(parents=True, exist_ok=True)
                 mixture = waveform[:, start:end]
                 mixture_path = directory / "mixture.wav"
-                from core.outputs import save_wav
+                from core.outputs import save_stereo_wav, save_wav
                 save_wav(mixture_path, mixture, sample_rate)
                 spk_a, spk_b, out_sr = separate_waveform(
                     mixture, sample_rate, models, num_steps, separate_chunk, _no_progress
                 )
-                out_a = directory / "speakerA.wav"
-                out_b = directory / "speakerB.wav"
-                save_wav(out_a, spk_a, out_sr)
-                save_wav(out_b, spk_b, out_sr)
+                stereo = directory / "audio.stereo.wav"
+                save_stereo_wav(stereo, spk_a, spk_b, out_sr)
                 record = {
                     "id": conversation_id, "start": dialogue.start, "end": dialogue.end,
                     "duration": dialogue.duration, "speakers": sorted(dialogue.speakers),
                     "segments": dialogue.segments, "mixture": str(mixture_path),
-                    "tracks": [str(out_a), str(out_b)], "sample_rate": out_sr,
+                    "stereo": str(stereo), "sample_rate": out_sr,
                 }
                 write_json(directory / "metadata.json", record)
                 conversations.append(record)
                 logger.info("Separated %s (%.2fs)", conversation_id, dialogue.duration)
         write_json(collection_dir / "manifest.json", {"conversations": conversations})
         logger.info("Saved %d conversation collections: %s", len(conversations), collection_dir)
-        return {"tracks": [], "segments": segments, "valid_dialogues": valid_dialogues, "conversations": conversations}
+        return {"stereo": None, "segments": segments, "valid_dialogues": valid_dialogues, "conversations": conversations}
     with StepTimer(logger, "Step 3: Full-input speech separation"):
         spk0, spk1, out_sr = separate(temp_wav, device, separation_backend, separation_model, num_steps, separate_chunk, _no_progress)
 
     with StepTimer(logger, "Step 4: Local reconstruction"):
-        out_A, out_B = write_tracks(output_prefix, phase_output_dir, spk0, spk1, out_sr, separation_backend, separation_model)
-    logger.info("Saved speaker tracks: %s, %s", out_A, out_B)
-    return {"tracks": [out_A, out_B], "segments": segments, "valid_dialogues": valid_dialogues}
+        stereo = write_stereo(output_prefix, phase_output_dir, spk0, spk1, out_sr, separation_backend, separation_model)
+    logger.info("Saved stereo output: %s", stereo)
+    return {"stereo": stereo, "segments": segments, "valid_dialogues": valid_dialogues}
 
 def main():
     parser = argparse.ArgumentParser(description="Test DuplexChat on a single audio file.")

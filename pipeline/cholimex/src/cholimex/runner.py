@@ -1,7 +1,7 @@
 """Purpose: Execute the complete Cholimex separation pipeline.
 
 Inputs: One mixture audio path, output directory, and Cholimex configuration.
-Outputs: Speaker WAVs, run manifest, and optional debug phase artifacts.
+Outputs: One stereo WAV, run manifest, and optional debug phase artifacts.
 """
 from __future__ import annotations
 
@@ -139,8 +139,7 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
         outputs.save_wav(directory / "mixture.wav", mixture, sr)
         outputs.save_wav(directory / "candidate_0.wav", candidate_0, sr)
         outputs.save_wav(directory / "candidate_1.wav", candidate_1, sr)
-        outputs.save_wav(directory / "speakerA.wav", speaker_0, sr)
-        outputs.save_wav(directory / "speakerB.wav", speaker_1, sr)
+        outputs.save_stereo_wav(directory / "audio.stereo.wav", speaker_0, speaker_1, sr)
         record["reference_audio"] = reference_audio
         outputs.write_json(directory / "metadata.json", record)
         assignment = record["assignment"]
@@ -156,21 +155,14 @@ def run_cholimex_file(input_path: Path, output_dir: Path, cfg: Config) -> dict:
             cfg.cholimex_overlap_padding,
             debug_callback=_write_overlap_debug if overlap_regions else None)
     outputs.write_json(debug_dir / "overlaps.json", overlap_records)
-    outputs.save_wav(output_dir / "speaker_0.wav", final_0, sample_rate)
-    outputs.save_wav(output_dir / "speaker_1.wav", final_1, sample_rate)
+    stereo_path = output_dir / "audio.stereo.wav"
+    outputs.save_stereo_wav(stereo_path, final_0, final_1, sample_rate)
     outputs.save_wav(debug_dir / "final_track_0.wav", final_0, sample_rate)
     outputs.save_wav(debug_dir / "final_track_1.wav", final_1, sample_rate)
-    stereo_path = None
-    if cfg.cholimex_output_stereo:
-        stereo_path = output_dir / "stereo.wav"
-        outputs.save_wav(stereo_path, torch.cat([final_0, final_1], dim=0), sample_rate)
-
     manifest = {
         "input": str(input_path),
         "output_dir": str(output_dir),
-        "speaker_0": str(output_dir / "speaker_0.wav"),
-        "speaker_1": str(output_dir / "speaker_1.wav"),
-        "stereo": str(stereo_path) if stereo_path is not None else None,
+        "stereo": str(stereo_path),
         "duration_sec": duration_sec,
         "sample_rate": sample_rate,
         "regions": len(regions),

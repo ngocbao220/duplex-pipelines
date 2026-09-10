@@ -27,7 +27,7 @@ def cholimex(source, output, config):
     if not debug:
         import shutil
         shutil.rmtree(output / 'debug', ignore_errors=True)
-    return [output / 'speaker_0.wav', output / 'speaker_1.wav'], {
+    return output / 'audio.stereo.wav', {
         'device': resolve_device(cfg.runtime_device, cfg.allow_cpu_fallback), 'pipeline_result': result}
 
 
@@ -54,7 +54,7 @@ def duplexchat(source, output, config):
             'conversations_2spk': len(conversations),
             'execution_mode': 'per_conversation_scale',
         }
-    return [output / 'speakerA.wav', output / 'speakerB.wav'], {
+    return output / 'audio.stereo.wav', {
         'device': resolve_device(config.get('runtime_device', 'auto')),
         'conversations_2spk': len(result['valid_dialogues']),
         'execution_mode': 'per_conversation_scale' if config.get('scale') else 'full_input_debug'}

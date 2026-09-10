@@ -1,7 +1,7 @@
-"""Purpose: Bridge vendored Sommelier artifacts to the common two-track contract.
+"""Purpose: Bridge vendored Sommelier artifacts to the common stereo contract.
 
 Inputs: One mixture path, output directory and fixed Sommelier profile.
-Outputs: Native Sommelier JSON/MP3 artifacts and two full-duration WAV tracks.
+Outputs: Native Sommelier JSON/MP3 artifacts and one full-duration stereo WAV.
 """
 from __future__ import annotations
 
@@ -39,8 +39,8 @@ def run(source: Path, output: Path, config: dict):
     manifests = sorted(input_dir.rglob(f"{source.stem}.json"), key=lambda path: path.stat().st_mtime)
     if not manifests:
         raise RuntimeError("Sommelier completed without its JSON manifest")
-    tracks = _reconstruct_tracks(source, manifests[-1], output)
-    return tracks, {"native_manifest": str(manifests[-1])}
+    stereo = _reconstruct_tracks(source, manifests[-1], output)
+    return stereo, {"native_manifest": str(manifests[-1])}
 
 
 def _stage_sepreformer_checkpoint() -> None:
@@ -61,7 +61,7 @@ def _stage_sepreformer_checkpoint() -> None:
     link.symlink_to(checkpoint)
 
 
-def _reconstruct_tracks(source: Path, manifest_path: Path, output: Path) -> list[Path]:
+def _reconstruct_tracks(source: Path, manifest_path: Path, output: Path) -> Path:
     import numpy as np
     import soundfile as sf
     from pydub import AudioSegment
@@ -87,9 +87,6 @@ def _reconstruct_tracks(source: Path, manifest_path: Path, output: Path) -> list
         track[start:end] += samples[: end - start]
     if len(tracks) != 2:
         raise ValueError(f"Sommelier must produce exactly two speakers; got {len(tracks)}")
-    paths = []
-    for index, (_, audio) in enumerate(sorted(tracks.items())):
-        path = output / f"speaker{'AB'[index]}.wav"
-        sf.write(path, np.clip(audio, -1.0, 1.0), rate, subtype="PCM_16")
-        paths.append(path)
-    return paths
+    stereo = output / "audio.stereo.wav"
+    sf.write(stereo, np.stack([audio for _, audio in sorted(tracks.items())], axis=1).clip(-1.0, 1.0), rate, subtype="PCM_16")
+    return stereo

@@ -23,7 +23,6 @@
     "proposal_model": "sarulab-speech/DialogueSidon",
     "overlap_separator_backend": "dialoguesidon",
     "overlap_separator_model": "sarulab-speech/DialogueSidon",
-    "speaker_embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
-    "output_stereo": false
+    "speaker_embedding_model": "speechbrain/spkrec-ecapa-voxceleb"
   }
 }

@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import soundfile as sf
 
-from core.orchestration.contract import run_sample, validate_conversation_collection, validate_tracks
+from core.orchestration.contract import run_sample, validate_conversation_collection, validate_stereo
 from core.orchestration.process import stream_process
 from core.orchestration.report import comparison_report
 
@@ -15,27 +15,32 @@ def _wav(path, frames=1600):
     return path
 
 
-def test_core_contract_requires_two_full_tracks(tmp_path):
+def _stereo_wav(path, frames=1600):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(path, np.zeros((frames, 2)), 16000)
+    return path
+
+
+def test_core_contract_requires_one_timeline_aligned_stereo_output(tmp_path):
     mixture = _wav(tmp_path / "mixture.wav")
-    tracks = [_wav(tmp_path / "a.wav"), _wav(tmp_path / "b.wav")]
-    assert validate_tracks(mixture, tracks) == 0.1
-    _wav(tracks[1], frames=800)
+    stereo = _stereo_wav(tmp_path / "audio.stereo.wav")
+    assert validate_stereo(mixture, stereo) == 0.1
+    _stereo_wav(stereo, frames=800)
     try:
-        validate_tracks(mixture, tracks)
+        validate_stereo(mixture, stereo)
     except ValueError as error:
         assert "timeline" in str(error)
     else:
         raise AssertionError("short track must fail validation")
 
 
-def test_conversation_collection_requires_two_timeline_aligned_tracks_per_dialogue(tmp_path):
+def test_conversation_collection_requires_one_stereo_output_per_dialogue(tmp_path):
     mixture = _wav(tmp_path / "conversation" / "mixture.wav", frames=3200)
-    first = _wav(tmp_path / "conversation" / "speakerA.wav", frames=3200)
-    second = _wav(tmp_path / "conversation" / "speakerB.wav", frames=3200)
-    collection = [{"mixture": str(mixture), "tracks": [str(first), str(second)]}]
+    stereo = _stereo_wav(tmp_path / "conversation" / "audio.stereo.wav", frames=3200)
+    collection = [{"mixture": str(mixture), "stereo": str(stereo)}]
 
     assert validate_conversation_collection(collection) == 0.2
-    _wav(second, frames=1600)
+    _stereo_wav(stereo, frames=1600)
     try:
         validate_conversation_collection(collection)
     except ValueError as error:
@@ -49,17 +54,16 @@ def test_collection_run_does_not_create_invalid_full_input_tracks(tmp_path):
 
     def collection_adapter(_source, output, _config):
         mixture = _wav(output / "conversations" / "conversation_00000" / "mixture.wav")
-        first = _wav(output / "conversations" / "conversation_00000" / "speakerA.wav")
-        second = _wav(output / "conversations" / "conversation_00000" / "speakerB.wav")
-        return [], {"output_kind": "conversation_collection", "conversations": [
-            {"mixture": str(mixture), "tracks": [str(first), str(second)]}
+        stereo = _stereo_wav(output / "conversations" / "conversation_00000" / "audio.stereo.wav")
+        return None, {"output_kind": "conversation_collection", "conversations": [
+            {"mixture": str(mixture), "stereo": str(stereo)}
         ]}
 
     result = run_sample("duplexchat", {"key": "sample", "mixture": str(source)}, tmp_path / "output", {}, "code", collection_adapter)
 
     assert result["status"] == "complete"
-    assert result["track_sha256"] == []
-    assert not (tmp_path / "output" / "speakerA.wav").exists()
+    assert result["audio_sha256"] is None
+    assert not (tmp_path / "output" / "audio.stereo.wav").exists()
 
 
 def test_core_report_uses_only_common_successes(tmp_path):

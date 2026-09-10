@@ -28,25 +28,25 @@ def fingerprint(pipeline: str, source: Path, config: dict, code: str) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def validate_tracks(source: Path, tracks: list[Path]) -> float:
+STEREO_FILENAME = "audio.stereo.wav"
+
+
+def validate_stereo(source: Path, stereo: Path) -> float:
     import numpy as np
     import soundfile as sf
 
-    if len(tracks) != 2 or tracks[0].resolve() == tracks[1].resolve():
-        raise ValueError('Expected exactly two distinct speaker tracks')
     reference = sf.info(source)
     duration = reference.frames / reference.samplerate
     if duration <= 0:
         raise ValueError('Empty input timeline')
-    for path in tracks:
-        info = sf.info(path)
-        if info.channels != 1 or info.frames <= 0:
-            raise ValueError(f'Expected nonempty mono track: {path}')
-        if abs(info.frames / info.samplerate - duration) > max(1 / info.samplerate, 1 / reference.samplerate):
-            raise ValueError(f'Track timeline differs from input: {path}')
-        for block in sf.blocks(path, blocksize=65536):
-            if not np.isfinite(block).all():
-                raise ValueError(f'Nonfinite samples: {path}')
+    info = sf.info(stereo)
+    if info.channels != 2 or info.frames <= 0:
+        raise ValueError(f'Expected nonempty stereo output: {stereo}')
+    if abs(info.frames / info.samplerate - duration) > max(1 / info.samplerate, 1 / reference.samplerate):
+        raise ValueError(f'Stereo timeline differs from input: {stereo}')
+    for block in sf.blocks(stereo, blocksize=65536):
+        if not np.isfinite(block).all():
+            raise ValueError(f'Nonfinite samples: {stereo}')
     return duration
 
 
@@ -57,19 +57,20 @@ def validate_conversation_collection(conversations: list[dict]) -> float:
     duration = 0.0
     for conversation in conversations:
         mixture = Path(conversation["mixture"])
-        tracks = [Path(path) for path in conversation["tracks"]]
-        duration += validate_tracks(mixture, tracks)
+        duration += validate_stereo(mixture, Path(conversation["stereo"]))
     return duration
 
 
 def _output_kind(metadata: dict) -> str:
-    return str(metadata.get("output_kind", "two_full_tracks"))
+    return str(metadata.get("output_kind", "full_stereo"))
 
 
-def validate_output(source: Path, tracks: list[Path], metadata: dict) -> float:
+def validate_output(source: Path, stereo: Path | None, metadata: dict) -> float:
     if _output_kind(metadata) == "conversation_collection":
         return validate_conversation_collection(metadata.get("conversations", []))
-    return validate_tracks(source, tracks)
+    if stereo is None:
+        raise ValueError("Full-input output requires a stereo WAV")
+    return validate_stereo(source, stereo)
 
 
 def vilier_tracks(manifest: Path) -> list[Path]:
@@ -88,9 +89,9 @@ def reusable(output: Path, identity: str, source: Path) -> dict | None:
         if _output_kind(metadata) == "conversation_collection":
             validate_conversation_collection(metadata.get("conversations", []))
         else:
-            tracks = [output / name for name in ('speakerA.wav', 'speakerB.wav')]
-            validate_tracks(source, tracks)
-            if result['track_sha256'] != [sha256(path) for path in tracks]:
+            stereo = output / STEREO_FILENAME
+            validate_stereo(source, stereo)
+            if result['audio_sha256'] != sha256(stereo):
                 return None
         return result
     except (OSError, ValueError, KeyError, RuntimeError):
@@ -115,18 +116,17 @@ def run_sample(pipeline, sample, output, config, code, adapter, force=False) -> 
         output.mkdir(parents=True, exist_ok=True)
         result['fingerprint'] = identity
         write_json(output / 'run.json', result)
-        tracks, metadata = adapter(source, output, config)
-        duration = validate_output(source, tracks, metadata)
-        canonical = [output / name for name in ('speakerA.wav', 'speakerB.wav')]
+        stereo, metadata = adapter(source, output, config)
+        duration = validate_output(source, stereo, metadata)
+        canonical = output / STEREO_FILENAME
         if _output_kind(metadata) != "conversation_collection":
-            for original, target in zip(tracks, canonical):
-                if original.resolve() != target.resolve():
-                    shutil.copy2(original, target)
+            if stereo.resolve() != canonical.resolve():
+                shutil.copy2(stereo, canonical)
         elapsed = time.perf_counter() - started
         result.update(status='complete', duration_sec=duration, inference_seconds=elapsed,
                       rtf=elapsed / duration, metadata=metadata,
-                      track_sha256=([sha256(path) for path in canonical]
-                                    if _output_kind(metadata) != "conversation_collection" else []))
+                      audio_sha256=(sha256(canonical)
+                                    if _output_kind(metadata) != "conversation_collection" else None))
     except Exception as exc:
         trace = traceback.format_exc()
         result.update(status='failed', error=f'{type(exc).__name__}: {exc}',

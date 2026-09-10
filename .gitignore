@@ -24,6 +24,7 @@ core.*
 error.log
 
 duplexchat_project.zip
+notebooks/local_reference_benchmark.ipynb
 
 .uv-cache/
 reports/
@@ -34,3 +35,4 @@ reports/
 .DS_Store
 
 compare/
+otospeech-output/

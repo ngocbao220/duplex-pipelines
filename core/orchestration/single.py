@@ -51,5 +51,5 @@ def run_single(name: str, source: Path, output: Path, debug: bool, gt_a: Path | 
     manifest = json.loads((output / "run.json").read_text())
     manifest["benchmark"] = {"mode": "reference" if gt_a else "reference_free", "report": str(report), "result": score}
     write_json(output / "run.json", manifest)
-    print(f"Done\n-> speakerA.wav: {output / 'speakerA.wav'}\n-> speakerB.wav: {output / 'speakerB.wav'}\n-> benchmark.json: {report}\n-> run.json: {output / 'run.json'}", flush=True)
+    print(f"Done\n-> audio.stereo.wav: {output / 'audio.stereo.wav'}\n-> benchmark.json: {report}\n-> run.json: {output / 'run.json'}", flush=True)
     return exit_code

@@ -27,7 +27,6 @@ class Config:
     cholimex_overlap_separator_backend: str = "dialoguesidon"
     cholimex_overlap_separator_model: str | None = "sarulab-speech/DialogueSidon"
     cholimex_speaker_embedding_model: str = "speechbrain/spkrec-ecapa-voxceleb"
-    cholimex_output_stereo: bool = False
 
 
 FIELD_ALIASES = {
@@ -49,7 +48,6 @@ FIELD_ALIASES = {
     "cholimex.overlap_separator_backend": "cholimex_overlap_separator_backend",
     "cholimex.overlap_separator_model": "cholimex_overlap_separator_model",
     "cholimex.speaker_embedding_model": "cholimex_speaker_embedding_model",
-    "cholimex.output_stereo": "cholimex_output_stereo",
 }
 PATH_FIELDS = {"benchmark_output_dir"}
 

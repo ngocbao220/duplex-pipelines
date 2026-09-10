@@ -181,6 +181,17 @@ def load_mono_audio(path: Path, target_sample_rate: int | None = None) -> tuple[
     return waveform, int(sample_rate)
 
 
+def load_stereo_audio(path: Path, target_sample_rate: int | None = None) -> tuple[torch.Tensor, int]:
+    waveform, sample_rate = torchaudio.load(str(path))
+    waveform = waveform.detach().cpu().float()
+    if waveform.ndim != 2 or waveform.shape[0] != 2:
+        raise ValueError(f"Expected exactly two channels: {path}")
+    if target_sample_rate is not None and sample_rate != target_sample_rate:
+        waveform = F_audio.resample(waveform, sample_rate, target_sample_rate)
+        sample_rate = target_sample_rate
+    return waveform, int(sample_rate)
+
+
 def align_pair_lengths(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     length = min(a.shape[-1], b.shape[-1])
     if length <= 0:
@@ -697,16 +708,10 @@ def _crosstalk_metrics(
     }
 
 
-def _resolve_prediction_paths(key: str, pred_root: Path) -> tuple[Path, Path] | None:
+def _resolve_prediction_path(key: str, pred_root: Path) -> Path | None:
     sample_dir = Path(pred_root) / key
-    candidates = [
-        (sample_dir / "speaker_A.wav", sample_dir / "speaker_B.wav"),
-        (sample_dir / "speaker_0.wav", sample_dir / "speaker_1.wav"),
-    ]
-    for left, right in candidates:
-        if left.is_file() and right.is_file():
-            return left, right
-    return None
+    prediction = sample_dir / "audio.stereo.wav"
+    return prediction if prediction.is_file() else None
 
 
 def _resolve_gt_paths(sample: dict[str, Any]) -> tuple[Path, Path]:
@@ -727,7 +732,7 @@ def score_reference_sample(
     key = str(sample.get("key") or Path(str(sample.get("gt_speaker_1") or sample.get("gt_agent", "sample"))).parent.name)
     try:
         gt_first, gt_second = _resolve_gt_paths(sample)
-        mixture, gt, sample_rate = mix_ground_truth_pair(
+        reference_mixture, gt, sample_rate = mix_ground_truth_pair(
             gt_first,
             gt_second,
             target_sample_rate,
@@ -737,25 +742,118 @@ def score_reference_sample(
 
     if sample.get("duration_limit_sec") is not None:
         limit = max(1, round(float(sample["duration_limit_sec"]) * sample_rate))
-        mixture, gt = mixture[..., :limit], gt[..., :limit]
+        reference_mixture, gt = reference_mixture[..., :limit], gt[..., :limit]
 
-    pred_paths = _resolve_prediction_paths(key, Path(pred_root))
-    if pred_paths is None:
-        row = _null_reference_row(key, "missing_prediction", {"prediction": "speaker prediction files missing"})
+    prediction = _resolve_prediction_path(key, Path(pred_root))
+    if prediction is None:
+        row = _null_reference_row(key, "missing_prediction", {"prediction": "stereo prediction file missing"})
         row["duration_sec"] = gt.shape[-1] / sample_rate
         return row
 
     try:
-        pred_a, _ = load_mono_audio(pred_paths[0], sample_rate)
-        pred_b, _ = load_mono_audio(pred_paths[1], sample_rate)
+        prediction_audio, _ = load_stereo_audio(prediction, sample_rate)
+        pred_a, pred_b = prediction_audio[0:1], prediction_audio[1:2]
     except Exception as exc:  # noqa: BLE001
         return _null_reference_row(key, "missing_prediction", {"prediction": str(exc)})
 
+    mixture = reference_mixture
+    mixture_path = sample.get("mixture")
+    if mixture_path and Path(str(mixture_path)).is_file():
+        try:
+            mixture, _ = load_mono_audio(Path(str(mixture_path)), sample_rate)
+            if sample.get("duration_limit_sec") is not None:
+                mixture = mixture[..., :limit]
+        except Exception as exc:  # noqa: BLE001
+            return _null_reference_row(key, "missing_ground_truth", {"mixture": str(exc)})
+    return _score_reference_tracks(
+        key,
+        gt_first,
+        gt_second,
+        mixture,
+        reference_mixture,
+        gt,
+        pred_a,
+        pred_b,
+        (prediction,),
+        sample_rate,
+        vad_threshold_db,
+        crosstalk_threshold_db,
+        validate_mixture=bool(mixture_path and Path(str(mixture_path)).is_file()),
+    )
+
+
+def score_reference_audio_pair(
+    gt1: Path,
+    gt2: Path,
+    mixed: Path,
+    predict1: Path,
+    predict2: Path,
+    *,
+    key: str = "local",
+    target_sample_rate: int = 16000,
+    vad_threshold_db: float = -40.0,
+    crosstalk_threshold_db: float = -20.0,
+) -> dict[str, Any]:
+    """Score explicit ground-truth, mixture, and two predicted WAV paths.
+
+    The supplied mixture must be ``gt1 + gt2`` or its PCM-safe clipped form.
+    This keeps SI-SDRi comparable with the audio sent to a pipeline.
+    """
+    gt1, gt2, mixed, predict1, predict2 = (Path(path) for path in (gt1, gt2, mixed, predict1, predict2))
+    reference_mixture, gt, sample_rate = mix_ground_truth_pair(gt1, gt2, target_sample_rate)
+    mixture, _ = load_mono_audio(mixed, sample_rate)
+    pred_a, _ = load_mono_audio(predict1, sample_rate)
+    pred_b, _ = load_mono_audio(predict2, sample_rate)
+    return _score_reference_tracks(
+        key,
+        gt1,
+        gt2,
+        mixture,
+        reference_mixture,
+        gt,
+        pred_a,
+        pred_b,
+        (predict1, predict2),
+        sample_rate,
+        vad_threshold_db,
+        crosstalk_threshold_db,
+        validate_mixture=True,
+    )
+
+
+def _score_reference_tracks(
+    key: str,
+    gt_first: Path,
+    gt_second: Path,
+    mixture: torch.Tensor,
+    reference_mixture: torch.Tensor,
+    gt: torch.Tensor,
+    pred_a: torch.Tensor,
+    pred_b: torch.Tensor,
+    pred_paths: tuple[Path, ...],
+    sample_rate: int,
+    vad_threshold_db: float,
+    crosstalk_threshold_db: float,
+    *,
+    validate_mixture: bool,
+) -> dict[str, Any]:
     pred_a, pred_b = align_pair_lengths(pred_a, pred_b)
-    length = min(pred_a.shape[-1], gt.shape[-1], mixture.shape[-1])
+    length = min(pred_a.shape[-1], gt.shape[-1], mixture.shape[-1], reference_mixture.shape[-1])
+    if length <= 0:
+        raise ValueError("reference audio is empty")
+    mixture = mixture[..., :length]
+    reference_mixture = reference_mixture[..., :length]
+    pcm_clipped_mixture = reference_mixture.clamp(-1.0, 1.0)
+    valid_mixture = torch.allclose(mixture, reference_mixture, rtol=1e-4, atol=1e-4) or torch.allclose(
+        mixture, pcm_clipped_mixture, rtol=1e-4, atol=1e-4
+    )
+    if validate_mixture and not valid_mixture:
+        difference = float(torch.max(torch.abs(mixture - reference_mixture)).item())
+        raise ValueError(
+            f"mixed input does not match gt1 + gt2 or its PCM-clipped form (max abs difference {difference:.6g})"
+        )
     pred = torch.cat([pred_a[:, :length], pred_b[:, :length]], dim=0)
     gt = gt[:, :length]
-    mixture = mixture[:, :length]
     pred, permutation, pit_score = _best_permutation(pred, gt)
 
     gt_masks = [_activity_mask(gt[idx], sample_rate, vad_threshold_db) for idx in range(2)]
@@ -770,7 +868,7 @@ def score_reference_sample(
         "duration_sec": length / sample_rate,
         "permutation": permutation,
         "pit_si_sdr_for_permutation": pit_score,
-        "prediction": [str(pred_paths[0]), str(pred_paths[1])],
+        "prediction": [str(path) for path in pred_paths],
         "ground_truth": [str(gt_first), str(gt_second)],
     }
     for condition, mask in [
