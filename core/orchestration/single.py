@@ -1,4 +1,4 @@
-"""Single-file bridge to the same isolated workers used by OtoSpeech."""
+"""Single-file bridge to the isolated pipeline workers."""
 from __future__ import annotations
 
 import json

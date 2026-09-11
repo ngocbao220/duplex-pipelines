@@ -65,37 +65,6 @@ overlap: PIT-SI-SDR, SI-SDRi, SAR, SIR, ESTOI, PESQ, crosstalk rate, VAD F1,
 onset/offset MAE, overlap F1 và overlap IoU. `PESQ`/`ESTOI` có thể là `null`
 nếu package optional không sẵn có hoặc đoạn audio không hợp lệ.
 
-### So sánh công bằng trên OtoSpeech
-
-Lệnh này tạo mixture từ cùng GT cho mỗi sample, chạy Vilier/Cholimex/DuplexChat
-tuần tự, rồi chỉ tổng hợp các sample hoàn thành ở tất cả pipeline:
-
-```bash
-UV_CACHE_DIR=.uv-cache uv run --project . python cli.py compare-otospeech \
-  --max-gb 1 --max-samples 1 --max-seconds 60 \
-  --output-root outputs/otospeech
-```
-
-Reports mặc định ở `reports/`:
-
-```text
-reports/vilier/summary.json       reports/vilier/summary.md
-reports/cholimex/summary.json     reports/cholimex/summary.md
-reports/duplexchat/summary.json   reports/duplexchat/summary.md
-reports/comparison.json           reports/comparison.md
-```
-
-`summary.md` là mean/median/p95 từng metric; `sample_metrics.jsonl` giữ metric
-từng sample, permutation PIT và lỗi nếu có. `comparison.md` chỉ dùng giao các
-sample valid, kèm runtime và RTF. Sommelier không tham gia benchmark chung.
-
-Để benchmark một pipeline trên OtoSpeech thay vì cả ba:
-
-```bash
-uv run --project pipeline/cholimex python -m cholimex otospeech \
-  --max-gb 1 --max-samples 1 --max-seconds 60
-```
-
 ## Smoke test sáu checkpoint separation
 
 `tools/test_separation_models.py` chỉ tách audio, không diarization hay

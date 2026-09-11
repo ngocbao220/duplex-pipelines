@@ -16,7 +16,6 @@ import torch
 import torch.nn.functional as F
 import torchaudio
 import torchaudio.functional as F_audio
-from huggingface_hub import HfApi, snapshot_download
 
 from .config import Config
 from .logging_utils import append_stats_table, setup_run_logging, write_artifacts
@@ -29,14 +28,6 @@ SUBJECTIVE_METRICS = ("squim_mos",)
 EMBEDDING_METRICS = ("itc", "itd")
 METRIC_NAMES = (*DNSMOS_METRICS, *SUBJECTIVE_METRICS, *OBJECTIVE_METRICS, *EMBEDDING_METRICS)
 DEFAULT_METRIC_NAMES = (*SUBJECTIVE_METRICS, *OBJECTIVE_METRICS, *EMBEDDING_METRICS)
-OTOSPEECH_REPO_ID = "otoearth/otoSpeech-full-duplex-turn-104h"
-OTOSPEECH_ALLOW_PATTERNS = [
-    "*/metadata.json",
-    "*/speaker_1_annotation_a.srt",
-    "*/speaker_2_annotation_a.srt",
-    "*/speaker_1_audio.wav",
-    "*/speaker_2_audio.wav",
-]
 QUALITY_TABLE_COLUMNS = [
     "key",
     "duration_sec",
@@ -226,110 +217,6 @@ def discover_ippc_pairs(root: Path) -> list[dict[str, str]]:
             continue
         rows.append({"key": pair_dir.name, "gt_agent": str(agent[0]), "gt_ctm": str(ctm[0])})
     return rows
-
-
-def discover_otospeech_samples(root: Path, sample_keys: set[str] | None = None) -> list[dict[str, str]]:
-    root = Path(root)
-    rows: list[dict[str, str]] = []
-    for metadata in sorted(root.rglob("metadata.json")):
-        sample_dir = metadata.parent
-        key = sample_dir.relative_to(root).as_posix()
-        if sample_keys is not None and key not in sample_keys:
-            continue
-        speaker_1 = sample_dir / "speaker_1_audio.wav"
-        speaker_2 = sample_dir / "speaker_2_audio.wav"
-        speaker_1_srt = sample_dir / "speaker_1_annotation_a.srt"
-        speaker_2_srt = sample_dir / "speaker_2_annotation_a.srt"
-        if not speaker_1.is_file() or not speaker_2.is_file():
-            continue
-        rows.append(
-            {
-                "key": key,
-                "metadata": str(metadata),
-                "gt_speaker_1": str(speaker_1),
-                "gt_speaker_2": str(speaker_2),
-                "speaker_1_srt": str(speaker_1_srt) if speaker_1_srt.is_file() else "",
-                "speaker_2_srt": str(speaker_2_srt) if speaker_2_srt.is_file() else "",
-            }
-        )
-    return rows
-
-
-def otospeech_limited_allow_patterns(repo_id: str, max_download_gb: float) -> list[str]:
-    budget_bytes = int(max_download_gb * 1024 ** 3)
-    api = HfApi()
-    files_by_sample: dict[str, dict[str, int]] = {}
-    for item in api.list_repo_tree(repo_id=repo_id, repo_type="dataset", recursive=True):
-        path = getattr(item, "path", "")
-        size = getattr(item, "size", None)
-        if not path or "/" not in path:
-            continue
-        filename = path.rsplit("/", 1)[-1]
-        if filename not in {
-            "metadata.json",
-            "speaker_1_annotation_a.srt",
-            "speaker_2_annotation_a.srt",
-            "speaker_1_audio.wav",
-            "speaker_2_audio.wav",
-        }:
-            continue
-        if size is None:
-            continue
-        sample = path.rsplit("/", 1)[0]
-        files_by_sample.setdefault(sample, {})[filename] = int(size)
-
-    selected: list[str] = []
-    used = 0
-    for sample, files in sorted(files_by_sample.items()):
-        if "speaker_1_audio.wav" not in files or "speaker_2_audio.wav" not in files:
-            continue
-        sample_paths = [
-            f"{sample}/metadata.json",
-            f"{sample}/speaker_1_annotation_a.srt",
-            f"{sample}/speaker_2_annotation_a.srt",
-            f"{sample}/speaker_1_audio.wav",
-            f"{sample}/speaker_2_audio.wav",
-        ]
-        sample_size = sum(files.get(path.rsplit("/", 1)[-1], 0) for path in sample_paths)
-        if sample_size <= 0:
-            continue
-        if used + sample_size > budget_bytes:
-            continue
-        selected.extend(sample_paths)
-        used += sample_size
-    if not selected:
-        raise RuntimeError(f"no OtoSpeech samples fit within max_download_gb={max_download_gb}")
-    return selected
-
-
-def otospeech_sample_keys_from_patterns(allow_patterns: list[str]) -> set[str]:
-    return {
-        pattern.rsplit("/", 1)[0]
-        for pattern in allow_patterns
-        if "/" in pattern and pattern.endswith("speaker_1_audio.wav")
-    }
-
-
-def download_otospeech_dataset(
-    repo_id: str = OTOSPEECH_REPO_ID,
-    local_dir: Path | None = None,
-    max_download_gb: float | None = 10.0,
-    allow_patterns: list[str] | None = None,
-) -> Path:
-    if allow_patterns is None:
-        allow_patterns = (
-            otospeech_limited_allow_patterns(repo_id, max_download_gb)
-            if max_download_gb is not None
-            else OTOSPEECH_ALLOW_PATTERNS
-        )
-    kwargs: dict[str, Any] = {
-        "repo_id": repo_id,
-        "repo_type": "dataset",
-        "allow_patterns": allow_patterns,
-    }
-    if local_dir is not None:
-        kwargs["local_dir"] = str(local_dir)
-    return Path(snapshot_download(**kwargs))
 
 
 def _mean(values: list[float | None]) -> float | None:
@@ -1446,12 +1333,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--single", action="store_true", help="Benchmark two separated speaker audio files.")
     parser.add_argument("--reference-manifest", type=Path, default=None, help="JSONL manifest with gt_agent/gt_ctm rows.")
     parser.add_argument("--ippc-root", type=Path, default=None, help="IPPC root containing pairs/pair_* ground-truth folders.")
-    parser.add_argument("--otospeech-root", type=Path, default=None, help="Local OtoSpeech snapshot root with per-sample metadata and speaker WAVs.")
-    parser.add_argument("--download-otospeech", action="store_true", help="Download a capped OtoSpeech subset before benchmarking.")
-    parser.add_argument("--otospeech-repo", default=OTOSPEECH_REPO_ID, help="Hugging Face dataset repo for OtoSpeech.")
-    parser.add_argument("--otospeech-local-dir", type=Path, default=None, help="Local download/cache directory for OtoSpeech.")
-    parser.add_argument("--max-download-gb", type=float, default=10.0, help="Maximum OtoSpeech download size in GB. Use <=10 for the requested cap.")
-    parser.add_argument("--pred-root", type=Path, default=Path("outputs/otospeech"), help="Prediction root keyed by sample id.")
+    parser.add_argument("--pred-root", type=Path, default=Path("outputs"), help="Prediction root keyed by sample id.")
     parser.add_argument("--speakerA", type=Path, help="Path to speaker A WAV/audio file.")
     parser.add_argument("--speakerB", type=Path, help="Path to speaker B WAV/audio file.")
     parser.add_argument("--output", type=Path, default=None, help="Output JSON path. Defaults to speakerA parent / benchmark.json.")
@@ -1538,25 +1420,14 @@ def main() -> None:
     if (
         args.reference_manifest is not None
         or args.ippc_root is not None
-        or args.otospeech_root is not None
-        or args.download_otospeech
     ):
         if args.reference_manifest is not None:
             samples = _read_reference_manifest(args.reference_manifest)
-        elif args.download_otospeech:
-            local_dir = download_otospeech_dataset(
-                repo_id=args.otospeech_repo,
-                local_dir=args.otospeech_local_dir,
-                max_download_gb=args.max_download_gb,
-            )
-            samples = discover_otospeech_samples(local_dir)
-        elif args.otospeech_root is not None:
-            samples = discover_otospeech_samples(args.otospeech_root)
         elif args.ippc_root is not None:
             samples = discover_ippc_pairs(args.ippc_root)
         else:
             samples = []
-        output = args.output or Path("reports/otospeech_benchmark/summary.json")
+        output = args.output or Path("reports/reference_benchmark/summary.json")
         run_reference_benchmark(
             samples,
             pred_root=args.pred_root,
@@ -1572,7 +1443,7 @@ def main() -> None:
     if args.single:
         _run_single(args)
         return
-    raise SystemExit("Use --single, --reference-manifest, --otospeech-root, --download-otospeech, or --ippc-root. Use duplexchat-pipe run --phase benchmark for WebDataset.")
+    raise SystemExit("Use --single, --reference-manifest, or --ippc-root. Use duplexchat-pipe run --phase benchmark for WebDataset.")
 
 
 if __name__ == "__main__":

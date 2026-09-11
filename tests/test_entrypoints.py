@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import cli
 import importlib
 import sys
 from pathlib import Path
@@ -10,13 +9,11 @@ import pytest
 from core.orchestration.cli import build_pipeline_parser
 
 
-def test_each_pipeline_cli_exposes_single_and_otospeech_commands():
+def test_each_pipeline_cli_exposes_single_command():
     for name in ("vilier", "duplexchat", "cholimex"):
         parser = build_pipeline_parser(name)
         single_args = parser.parse_args(["single", "--input", "mixture.wav", "--output-dir", "out"])
-        otospeech_args = parser.parse_args(["otospeech", "--max-samples", "1"])
         assert single_args.command == "single"
-        assert otospeech_args.command == "otospeech"
 
 
 def test_duplexchat_cli_exposes_split_conversation_flag():
@@ -34,11 +31,6 @@ def test_duplexchat_cli_rejects_removed_conversation_scale_option():
 
     with pytest.raises(SystemExit):
         parser.parse_args(["single", "--input", "mixture.wav", "--output-dir", "out", "--scale", "true"])
-
-
-def test_root_cli_exposes_one_explicit_comparison_command():
-    args = cli.build_parser().parse_args(["compare-otospeech", "--max-samples", "1"])
-    assert args.command == "compare-otospeech"
 
 
 def test_vilier_reconstruct_imports_the_renamed_preprocess_module():

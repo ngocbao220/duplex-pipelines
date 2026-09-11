@@ -35,5 +35,4 @@ reports/
 .DS_Store
 
 compare/
-otospeech-output/
 *.wav

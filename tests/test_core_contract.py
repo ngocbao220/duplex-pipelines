@@ -9,7 +9,6 @@ import soundfile as sf
 from core.orchestration.contract import run_sample, validate_stereo
 from core.orchestration import worker
 from core.orchestration.process import stream_process
-from core.orchestration.report import comparison_report
 
 
 def _wav(path, frames=1600):
@@ -60,15 +59,6 @@ def test_duplexchat_worker_always_returns_full_stereo_and_uses_debug_only_for_di
     assert stereo == tmp_path / "output" / "audio.stereo.wav"
     assert metadata == {"device": "cpu", "execution_mode": "full_stereo", "diarization_debug": True}
     assert captured["analyze_diarization"] is True
-
-
-def test_core_report_uses_only_common_successes(tmp_path):
-    rows = {"vilier": [{"key": "a", "status": "ok", "all": {"pit_si_sdr": 1.0}}],
-            "cholimex": [{"key": "a", "status": "ok", "all": {"pit_si_sdr": 2.0}}]}
-    runtime = {name: [{"status": "complete", "duration_sec": 1, "inference_seconds": 1}] for name in rows}
-    result = comparison_report(rows, runtime, tmp_path / "comparison")
-    assert result["common_keys"] == ["a"]
-    assert json.loads((tmp_path / "comparison.json").read_text())["common_samples"] == 1
 
 
 def test_failed_sample_emits_one_concise_console_error_and_persists_traceback(tmp_path, capsys):

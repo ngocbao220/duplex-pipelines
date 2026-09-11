@@ -20,18 +20,6 @@ def build_pipeline_parser(name: str) -> argparse.ArgumentParser:
         single.add_argument("--split_conversation", action="store_true")
     single.add_argument("--gt-speaker-a", type=Path)
     single.add_argument("--gt-speaker-b", type=Path)
-
-    otospeech = commands.add_parser("otospeech", help="Run a bounded OtoSpeech reference benchmark.")
-    otospeech.add_argument("--otospeech-root", type=Path)
-    otospeech.add_argument("--download-dir", type=Path, default=Path("data/otospeech"))
-    otospeech.add_argument("--max-gb", type=float, default=10.0)
-    otospeech.add_argument("--max-samples", type=int, default=None)
-    otospeech.add_argument("--max-seconds", type=float, default=None)
-    otospeech.add_argument("--output-root", type=Path, default=Path("outputs"))
-    otospeech.add_argument("--debug", action="store_true")
-    if name == "duplexchat":
-        otospeech.add_argument("--split_conversation", action="store_true")
-    otospeech.add_argument("--force", action="store_true")
     return parser
 
 
@@ -51,24 +39,4 @@ def run_pipeline_command(name: str, argv: list[str] | None = None) -> int:
                            args.gt_speaker_a.resolve() if args.gt_speaker_a else None,
                           args.gt_speaker_b.resolve() if args.gt_speaker_b else None)
 
-    from types import SimpleNamespace
-    from core import benchmark
-    from core.config import load_config
-    from core.outputs import save_wav
-    from .runner import run_otospeech
-
-    if args.max_gb <= 0 or (args.max_samples is not None and args.max_samples <= 0) or (
-        args.max_seconds is not None and args.max_seconds <= 0
-    ):
-        raise SystemExit("OtoSpeech limits must be positive")
-    options = SimpleNamespace(
-        pipeline=name, config=ROOT / "configs/config.json", otospeech_root=args.otospeech_root,
-        otospeech_repo="otoearth/otoSpeech-full-duplex-turn-104h", otospeech_local_dir=args.download_dir,
-        max_gb=args.max_gb, max_samples=args.max_samples, max_seconds=args.max_seconds,
-        output_root=args.output_root, pred_root=None, mixture_root=None, benchmark_output=None,
-        sample_rate=16000, vad_threshold_db=-40.0, crosstalk_threshold_db=-20.0,
-        debug=args.debug, split_conversation=getattr(args, "split_conversation", False), force=args.force,
-        vilier_config=ROOT / "configs/vilier.json",
-        duplexchat_config=ROOT / "configs/duplexchat.json",
-    )
-    return run_otospeech(load_config(options.config), options, benchmark, save_wav)
+    raise AssertionError(f"Unsupported command: {args.command}")
