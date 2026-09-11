@@ -137,7 +137,7 @@ def main():
     parser = argparse.ArgumentParser(description="Test DuplexChat on a single audio file.")
     parser.add_argument("audio_path", type=str, help="Path to the input audio file (mp3/wav)")
     parser.add_argument("--diarize-chunk", type=float, default=60.0, help="Max chunk duration (seconds) for Diarization")
-    parser.add_argument("--separate-chunk", type=float, default=30.0, help="Chunk duration (seconds) for Separation")
+    parser.add_argument("--separate-chunk", type=float, default=60.0, help="Chunk duration (seconds) for Separation")
     parser.add_argument("--diarization-backend", default="auto", help="Diarization backend: auto, pyannote, sortformer, diarizen")
     parser.add_argument("--diarization-model", default="pyannote/speaker-diarization-community-1", help="Diarization model id or alias")
     parser.add_argument("--separation-backend", default="dialoguesidon", help="Separation backend: dialoguesidon, sepformer, mossformer2")

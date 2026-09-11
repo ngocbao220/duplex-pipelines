@@ -5,11 +5,13 @@ Outputs: Normalized diarization segment dictionaries.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
+import torch.nn.functional as F
 from huggingface_hub import get_token
 
 from .audio import load_wav_tensor
@@ -181,14 +183,131 @@ def _parse_sortformer_segment(item: Any) -> dict | None:
     return None
 
 
-import numpy as np
-from collections.abc import Callable
+class EmbeddingExtractor(Protocol):
+    def extract(self, wav: torch.Tensor, sample_rate: int) -> torch.Tensor:
+        ...
+
+
+class SpeechBrainEmbeddingExtractor:
+    """Public, versioned speaker embedding API used to link diarization chunks."""
+
+    model_id = "speechbrain/spkrec-ecapa-voxceleb"
+    sample_rate = 16000
+    minimum_samples = 8000
+
+    def __init__(self, device: str) -> None:
+        EncoderClassifier = _load_encoder_classifier()
+        self.device = device
+        self.model = EncoderClassifier.from_hparams(
+            source=self.model_id,
+            run_opts={"device": self.device},
+        )
+
+    def extract(self, wav: torch.Tensor, sample_rate: int) -> torch.Tensor:
+        prepared = wav.detach().cpu().float()
+        if prepared.ndim > 1:
+            prepared = prepared.mean(dim=0)
+        if sample_rate != self.sample_rate:
+            import torchaudio.functional as F_audio
+
+            prepared = F_audio.resample(
+                prepared.unsqueeze(0), sample_rate, self.sample_rate,
+            ).squeeze(0)
+        if prepared.numel() < self.minimum_samples:
+            prepared = F.pad(prepared, (0, self.minimum_samples - prepared.numel()))
+        with torch.inference_mode():
+            embedding = self.model.encode_batch(prepared.unsqueeze(0).to(self.device))
+        return embedding.detach().cpu().reshape(-1).float()
+
+
+class GlobalSpeakerLinker:
+    """Assign chunk-local diarization labels to stable global speaker labels."""
+
+    def __init__(self, extractor: EmbeddingExtractor, similarity_threshold: float = 0.7) -> None:
+        self.extractor = extractor
+        self.similarity_threshold = similarity_threshold
+        self._embeddings: dict[str, list[torch.Tensor]] = {}
+        self._next_speaker_index = 0
+        self._embedded_labels = 0
+        self._matched_labels = 0
+        self._new_labels = 0
+
+    def link(
+        self, local_segments: list[dict], chunk_waveform: torch.Tensor, sample_rate: int,
+    ) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        for speaker in sorted({segment["speaker"] for segment in local_segments}):
+            speaker_segments = [segment for segment in local_segments if segment["speaker"] == speaker]
+            embeddings = [
+                self.extractor.extract(_slice_segment(chunk_waveform, segment, sample_rate), sample_rate)
+                for segment in speaker_segments
+                if segment["end"] > segment["start"]
+            ]
+            if not embeddings:
+                raise RuntimeError(
+                    "Could not extract a speaker embedding for diarization label "
+                    f"{speaker}; refusing to create an unstable fallback label."
+                )
+            self._embedded_labels += 1
+            local_embedding = torch.stack(embeddings).mean(dim=0)
+            global_speaker = self._best_match(local_embedding)
+            if global_speaker is None:
+                global_speaker = f"SPEAKER_{self._next_speaker_index:02d}"
+                self._next_speaker_index += 1
+                self._embeddings[global_speaker] = []
+                self._new_labels += 1
+            else:
+                self._matched_labels += 1
+            self._embeddings[global_speaker].append(local_embedding)
+            mapping[speaker] = global_speaker
+        return mapping
+
+    def diagnostics(self) -> dict:
+        return {
+            "method": "speechbrain_ecapa_cosine",
+            "similarity_threshold": self.similarity_threshold,
+            "embedding_labels": self._embedded_labels,
+            "global_speakers": len(self._embeddings),
+            "matched_labels": self._matched_labels,
+            "new_labels": self._new_labels,
+        }
+
+    def _best_match(self, embedding: torch.Tensor) -> str | None:
+        best_speaker: str | None = None
+        best_score = -1.0
+        for speaker, embeddings in self._embeddings.items():
+            centroid = torch.stack(embeddings).mean(dim=0)
+            score = float(F.cosine_similarity(embedding.reshape(-1), centroid.reshape(-1), dim=0))
+            if score > best_score:
+                best_speaker, best_score = speaker, score
+        return best_speaker if best_score >= self.similarity_threshold else None
+
+
+def _slice_segment(waveform: torch.Tensor, segment: dict, sample_rate: int) -> torch.Tensor:
+    start = max(0, int(round(segment["start"] * sample_rate)))
+    end = min(waveform.shape[-1], int(round(segment["end"] * sample_rate)))
+    return waveform[:, start:end]
+
+
+def _load_encoder_classifier():
+    try:
+        from speechbrain.inference.speaker import EncoderClassifier
+    except ModuleNotFoundError as exc:
+        if exc.name is None or not (exc.name == "speechbrain" or exc.name.startswith("speechbrain.")):
+            raise
+        raise RuntimeError(
+            "DuplexChat chunked pyannote diarization requires SpeechBrain ECAPA. "
+            "Install the DuplexChat runtime dependency with `uv sync --extra duplexchat`."
+        ) from exc
+    return EncoderClassifier
+
 
 def run_diarization(
     pipeline: "Pipeline | FileDiarizationAdapter",
     wav_path: Path,
     max_chunk_dur: float = 60.0,
     progress_callback: Callable[[str, int], None] | None = None,
+    diagnostics: dict | None = None,
 ) -> list[dict]:
     """
     Chạy diarization bằng cách dùng VAD để cắt audio thành các chunk <= max_chunk_dur,
@@ -198,6 +317,8 @@ def run_diarization(
         if progress_callback is not None:
             progress_callback("start", 1)
         segments = pipeline.diarize_file(wav_path)
+        if diagnostics is not None:
+            diagnostics.update({"method": "backend_native_labels", "global_speakers": len({s["speaker"] for s in segments})})
         if progress_callback is not None:
             progress_callback("advance", 1)
             progress_callback("close", 0)
@@ -241,14 +362,13 @@ def run_diarization(
     chunks.append((curr_start, curr_end))
     if progress_callback is not None:
         progress_callback("start", len(chunks))
+    if diagnostics is not None:
+        diagnostics.update({"chunk_count": len(chunks), "chunks": []})
     
-    # 3. Chạy diarization trên từng chunk & trích xuất embedding
+    # 3. Chạy diarization từng chunk và link nhãn local qua public ECAPA API.
     all_segments = []
-    global_speaker_embs = {}  # {global_spk_id: list_of_embeddings}
-    global_spk_idx = 0
-    
-    # Lấy model embedding từ pipeline (nếu có)
-    embedding_model = getattr(pipeline, "_embedding", None)
+    embedding_device = "cuda" if torch.cuda.is_available() else "cpu"
+    linker = GlobalSpeakerLinker(SpeechBrainEmbeddingExtractor(embedding_device))
     
     for c_start, c_end in chunks:
         # Mở rộng nhẹ chunk để không cắt gắt
@@ -288,55 +408,16 @@ def run_diarization(
                 progress_callback("advance", 1)
             continue
             
-        # 4. Gắn speaker globally bằng cách so sánh Cosine Similarity của embedding
-        local_to_global = {}
-        for spk in set(s["speaker"] for s in local_segs):
-            spk_segs = [s for s in local_segs if s["speaker"] == spk]
-            spk_embs = []
-            
-            if embedding_model is not None:
-                for s in spk_segs:
-                    seg_s_idx = int(s["start"] * sample_rate)
-                    seg_e_idx = int(s["end"] * sample_rate)
-                    seg_wav = chunk_wav[:, seg_s_idx:seg_e_idx]
-                    
-                    if seg_wav.shape[1] > 160: # Tránh segment quá ngắn
-                        with torch.no_grad():
-                            try:
-                                emb = embedding_model(seg_wav.unsqueeze(0))
-                                spk_embs.append(emb.squeeze(0).cpu().numpy())
-                            except:
-                                pass
-                                
-            if spk_embs:
-                local_emb = np.mean(spk_embs, axis=0)
-                local_emb = local_emb.flatten()
-                
-                # Tìm global speaker phù hợp nhất
-                best_sim = -1.0
-                best_g_spk = None
-                for g_spk, g_embs in global_speaker_embs.items():
-                    g_emb = np.mean(g_embs, axis=0).flatten()
-                    sim = np.dot(local_emb, g_emb) / (np.linalg.norm(local_emb) * np.linalg.norm(g_emb) + 1e-8)
-                    if sim > best_sim:
-                        best_sim = sim
-                        best_g_spk = g_spk
-                        
-                # Ngưỡng cosine similarity
-                if best_sim > 0.7 and best_g_spk is not None:
-                    local_to_global[spk] = best_g_spk
-                    global_speaker_embs[best_g_spk].append(local_emb)
-                else:
-                    new_g_spk = f"SPEAKER_{global_spk_idx:02d}"
-                    global_spk_idx += 1
-                    local_to_global[spk] = new_g_spk
-                    global_speaker_embs[new_g_spk] = [local_emb]
-            else:
-                # Fallback nếu không tính được embedding
-                new_g_spk = f"SPEAKER_UNK_{global_spk_idx:02d}"
-                global_spk_idx += 1
-                local_to_global[spk] = new_g_spk
-                
+        local_to_global = linker.link(local_segs, chunk_wav, sample_rate)
+        if diagnostics is not None:
+            diagnostics["chunks"].append(
+                {
+                    "start": s_pad,
+                    "end": e_pad,
+                    "local_labels": sorted(local_to_global),
+                    "global_labels": sorted(set(local_to_global.values())),
+                }
+            )
         # Cập nhật thời gian thực tế và append
         for s in local_segs:
             all_segments.append({
@@ -351,6 +432,8 @@ def run_diarization(
             progress_callback("advance", 1)
 
     all_segments.sort(key=lambda x: x["start"])
+    if diagnostics is not None:
+        diagnostics.update(linker.diagnostics())
     if progress_callback is not None:
         progress_callback("close", 0)
     return all_segments

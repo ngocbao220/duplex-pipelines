@@ -28,18 +28,30 @@ def split_into_dialogues(segments: list[dict], gap_seconds: float) -> list[Dialo
     if not segments:
         return []
 
+    segments = sorted(segments, key=lambda segment: (segment["start"], segment["end"]))
     groups: list[list[dict]] = []
     current: list[dict] = [segments[0]]
+    active_end = segments[0]["end"]
 
     for seg in segments[1:]:
-        if seg["start"] - current[-1]["end"] >= gap_seconds:
+        if seg["start"] - active_end >= gap_seconds:
             groups.append(current)
             current = [seg]
+            active_end = seg["end"]
         else:
             current.append(seg)
+            active_end = max(active_end, seg["end"])
     groups.append(current)
 
-    return [Dialogue(segments=g, start=g[0]["start"], end=g[-1]["end"]) for g in groups]
+    return [_dialogue_from_segments(group) for group in groups]
+
+
+def _dialogue_from_segments(segments: list[dict]) -> Dialogue:
+    return Dialogue(
+        segments=segments,
+        start=min(segment["start"] for segment in segments),
+        end=max(segment["end"] for segment in segments),
+    )
 
 
 def _two_speaker_runs(segments: list[dict]) -> list[list[dict]]:
@@ -86,27 +98,61 @@ def is_balanced_dialogue(dialogue: Dialogue, max_single_speaker_ratio: float) ->
 def _split_long_dialogue(
     dlg: Dialogue, max_duration: float, min_duration: float,
 ) -> list[Dialogue]:
-    """Split a dialogue into chunks of at most max_duration seconds."""
+    """Split only at an internal dual-speaker silence; never crop active speech."""
     if dlg.duration <= max_duration:
         return [dlg]
 
     chunks: list[Dialogue] = []
-    current: list[dict] = []
-    chunk_start = dlg.segments[0]["start"]
-
-    for seg in dlg.segments:
-        current.append(seg)
-        if seg["end"] - chunk_start >= max_duration:
-            chunks.append(Dialogue(segments=current, start=chunk_start, end=seg["end"]))
-            current = []
-            chunk_start = seg["end"]
-
-    if current:
-        candidate = Dialogue(segments=current, start=chunk_start, end=current[-1]["end"])
-        if candidate.duration >= min_duration:
+    remaining = sorted(dlg.segments, key=lambda segment: (segment["start"], segment["end"]))
+    while remaining:
+        candidate = _dialogue_from_segments(remaining)
+        if candidate.duration <= max_duration:
             chunks.append(candidate)
+            break
+
+        boundary = _nearest_dual_silence_boundary(
+            remaining, target=candidate.start + max_duration, lower_bound=candidate.start,
+        )
+        if boundary is None:
+            # A duration cap must not cut a word, utterance, interruption, or overlap.
+            chunks.append(candidate)
+            break
+
+        silence_start, silence_end = boundary
+        left = [segment for segment in remaining if segment["end"] <= silence_start]
+        right = [segment for segment in remaining if segment["start"] >= silence_end]
+        if not left or not right:
+            chunks.append(candidate)
+            break
+        chunks.append(_dialogue_from_segments(left))
+        remaining = right
 
     return chunks
+
+
+def _nearest_dual_silence_boundary(
+    segments: list[dict], target: float, lower_bound: float, minimum_silence: float = 0.3,
+) -> tuple[float, float] | None:
+    """Return an internal silence interval, first within target +/- 10 seconds."""
+    active_intervals: list[list[float]] = []
+    for segment in sorted(segments, key=lambda item: (item["start"], item["end"])):
+        start, end = segment["start"], segment["end"]
+        if not active_intervals or start > active_intervals[-1][1]:
+            active_intervals.append([start, end])
+        else:
+            active_intervals[-1][1] = max(active_intervals[-1][1], end)
+
+    silences = [
+        (left[1], right[0])
+        for left, right in zip(active_intervals, active_intervals[1:])
+        if left[1] >= lower_bound and right[0] - left[1] >= minimum_silence
+    ]
+    if not silences:
+        return None
+
+    nearby = [gap for gap in silences if abs(((gap[0] + gap[1]) / 2) - target) <= 10.0]
+    candidates = nearby or silences
+    return min(candidates, key=lambda gap: (abs(((gap[0] + gap[1]) / 2) - target), gap[0]))
 
 
 def extract_valid_dialogues(
@@ -124,7 +170,7 @@ def extract_valid_dialogues(
     result: list[Dialogue] = []
     for group in split_into_dialogues(segments, gap_seconds):
         for run in _two_speaker_runs(group.segments):
-            dlg = Dialogue(segments=run, start=run[0]["start"], end=run[-1]["end"])
+            dlg = _dialogue_from_segments(run)
             if dlg.duration < min_duration_seconds:
                 continue
             for chunk in _split_long_dialogue(dlg, max_duration_seconds, min_duration_seconds):
