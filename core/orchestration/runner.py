@@ -100,6 +100,10 @@ def pipeline_config(name, args, cfg):
     config['debug'] = bool(args.debug)
     if name == 'duplexchat':
         config['split_conversation'] = bool(getattr(args, 'split_conversation', False))
+        if getattr(args, 'diarization_backend', None):
+            config['diarization_backend'] = args.diarization_backend
+        if getattr(args, 'diarization_model', None):
+            config['diarization_model'] = args.diarization_model
     return config
 
 
