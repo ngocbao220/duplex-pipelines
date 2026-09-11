@@ -99,7 +99,7 @@ def pipeline_config(name, args, cfg):
         config.setdefault('entrypoint', {})['sample_rate'] = args.sample_rate
     config['debug'] = bool(args.debug)
     if name == 'duplexchat':
-        config['scale'] = bool(getattr(args, 'scale', False))
+        config['split_conversation'] = bool(getattr(args, 'split_conversation', False))
     return config
 
 

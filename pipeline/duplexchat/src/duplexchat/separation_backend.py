@@ -24,6 +24,7 @@ REPO_ID_MOSSFORMER2 = "alibabasglab/MossFormer2_SS_16K"
 REPO_ID_SEPFORMER = "speechbrain/sepformer-wsj02mix"
 MODEL_FILES = ["ssl_encoder.pt2", "diffusion_head.pt2", "vae_decoder.pt2", "metadata.json"]
 SAMPLE_RATE_IN = 16_000
+DIALOGUESIDON_SAMPLE_RATE_IN = 24_000
 CHUNK_SECONDS = 30.0
 OVERLAP_SECONDS = 5.0
 
@@ -160,6 +161,7 @@ def _load_dialoguesidon_models(device: str = "cuda", model_id: str | None = None
             "scheduler": scheduler,
             "latent_dim": meta["latent_dim"],
             "sample_rate": meta["sample_rate"],
+            "input_sample_rate": DIALOGUESIDON_SAMPLE_RATE_IN,
             "device": torch_device,
             "backend": "dialoguesidon",
             "model_id": repo_id,
@@ -413,15 +415,16 @@ def run_separation(
 
     device = models["device"]
     out_sr: int = models["sample_rate"]
+    input_sample_rate = int(models.get("input_sample_rate", SAMPLE_RATE_IN))
 
-    if sample_rate != SAMPLE_RATE_IN:
-        wav = F_audio.resample(wav, sample_rate, SAMPLE_RATE_IN)
+    if sample_rate != input_sample_rate:
+        wav = F_audio.resample(wav, sample_rate, input_sample_rate)
     # Keep the full source timeline on CPU. Only the active chunk belongs on
     # CUDA; otherwise a small chunk setting still leaves the whole recording
     # (and its growing stitched output) consuming VRAM.
     wav = wav.cpu()
 
-    chunk_samples = int(chunk_seconds * SAMPLE_RATE_IN)
+    chunk_samples = int(chunk_seconds * input_sample_rate)
     total_samples = wav.shape[-1]
 
     if total_samples <= chunk_samples:
@@ -431,7 +434,7 @@ def run_separation(
         max_val = chunk.abs().max().clamp_min(1e-6)
         wav_norm = torch.nn.functional.pad(0.9 * chunk / max_val, (160, 160))
         separated = _separate_chunk(wav_norm, num_steps, models)
-        target_out = max(1, round(total_samples * out_sr / SAMPLE_RATE_IN))
+        target_out = max(1, round(total_samples * out_sr / input_sample_rate))
         if separated.shape[-1] > target_out:
             separated = separated[:, :target_out]
         elif separated.shape[-1] < target_out:
@@ -443,7 +446,7 @@ def run_separation(
         if progress_callback is not None:
             progress_callback("advance", 1)
     else:
-        overlap_samples_in = int(overlap_seconds * SAMPLE_RATE_IN)
+        overlap_samples_in = int(overlap_seconds * input_sample_rate)
         hop_samples = chunk_samples - overlap_samples_in
         starts = list(range(0, total_samples, hop_samples))
         if progress_callback is not None:
@@ -458,7 +461,7 @@ def run_separation(
             chunk_norm = torch.nn.functional.pad(0.9 * chunk / max_val, (160, 160))
             pred = _separate_chunk(chunk_norm, num_steps, models)
 
-            target_out = max(1, round((end - start) * out_sr / SAMPLE_RATE_IN))
+            target_out = max(1, round((end - start) * out_sr / input_sample_rate))
             if pred.shape[-1] > target_out:
                 pred = pred[:, :target_out]
             elif pred.shape[-1] < target_out:
@@ -476,7 +479,7 @@ def run_separation(
 
             overlap_in = max(0, prev_end_in - start)
             overlap_out = max(0, min(
-                round(overlap_in * out_sr / SAMPLE_RATE_IN),
+                round(overlap_in * out_sr / input_sample_rate),
                 stitched.shape[-1],
                 pred.shape[-1],
             ))

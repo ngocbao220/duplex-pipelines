@@ -17,6 +17,9 @@ from huggingface_hub import get_token
 from .audio import load_wav_tensor
 from .model_options import DIARIZATION_MODELS, infer_diarization_backend, resolve_model_alias
 
+
+DIARIZATION_SAMPLE_RATE = 16_000
+
 if TYPE_CHECKING:
     from pyannote.audio import Pipeline
 
@@ -345,7 +348,13 @@ def run_diarization(
             progress_callback("close", 0)
         return segments
 
-    waveform, sample_rate = load_wav_tensor(wav_path)
+    waveform, source_sample_rate = load_wav_tensor(wav_path)
+    sample_rate = DIARIZATION_SAMPLE_RATE
+    if source_sample_rate != sample_rate:
+        target_length = max(1, round(waveform.shape[-1] * sample_rate / source_sample_rate))
+        waveform = F.interpolate(
+            waveform.unsqueeze(0), size=target_length, mode="linear", align_corners=False,
+        ).squeeze(0)
     dur_sec = waveform.shape[1] / sample_rate
     
     # 1. Dùng Silero VAD để lấy các phân đoạn có giọng nói

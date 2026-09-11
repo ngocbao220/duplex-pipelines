@@ -50,24 +50,7 @@ def validate_stereo(source: Path, stereo: Path) -> float:
     return duration
 
 
-def validate_conversation_collection(conversations: list[dict]) -> float:
-    """Validate DuplexChat's native per-conversation two-track output."""
-    if not conversations:
-        raise ValueError("DuplexChat scale output contains no valid two-speaker conversations")
-    duration = 0.0
-    for conversation in conversations:
-        mixture = Path(conversation["mixture"])
-        duration += validate_stereo(mixture, Path(conversation["stereo"]))
-    return duration
-
-
-def _output_kind(metadata: dict) -> str:
-    return str(metadata.get("output_kind", "full_stereo"))
-
-
 def validate_output(source: Path, stereo: Path | None, metadata: dict) -> float:
-    if _output_kind(metadata) == "conversation_collection":
-        return validate_conversation_collection(metadata.get("conversations", []))
     if stereo is None:
         raise ValueError("Full-input output requires a stereo WAV")
     return validate_stereo(source, stereo)
@@ -85,14 +68,10 @@ def reusable(output: Path, identity: str, source: Path) -> dict | None:
         result = json.loads((output / 'run.json').read_text())
         if result['status'] != 'complete' or result['fingerprint'] != identity:
             return None
-        metadata = result.get("metadata", {})
-        if _output_kind(metadata) == "conversation_collection":
-            validate_conversation_collection(metadata.get("conversations", []))
-        else:
-            stereo = output / STEREO_FILENAME
-            validate_stereo(source, stereo)
-            if result['audio_sha256'] != sha256(stereo):
-                return None
+        stereo = output / STEREO_FILENAME
+        validate_stereo(source, stereo)
+        if result['audio_sha256'] != sha256(stereo):
+            return None
         return result
     except (OSError, ValueError, KeyError, RuntimeError):
         return None
@@ -119,14 +98,12 @@ def run_sample(pipeline, sample, output, config, code, adapter, force=False) -> 
         stereo, metadata = adapter(source, output, config)
         duration = validate_output(source, stereo, metadata)
         canonical = output / STEREO_FILENAME
-        if _output_kind(metadata) != "conversation_collection":
-            if stereo.resolve() != canonical.resolve():
-                shutil.copy2(stereo, canonical)
+        if stereo.resolve() != canonical.resolve():
+            shutil.copy2(stereo, canonical)
         elapsed = time.perf_counter() - started
         result.update(status='complete', duration_sec=duration, inference_seconds=elapsed,
                       rtf=elapsed / duration, metadata=metadata,
-                      audio_sha256=(sha256(canonical)
-                                    if _output_kind(metadata) != "conversation_collection" else None))
+                      audio_sha256=sha256(canonical))
     except Exception as exc:
         trace = traceback.format_exc()
         result.update(status='failed', error=f'{type(exc).__name__}: {exc}',

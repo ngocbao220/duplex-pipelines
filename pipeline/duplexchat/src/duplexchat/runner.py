@@ -6,16 +6,16 @@ Outputs: One stereo WAV file and inspectable phase artifacts.
 import torch
 from pathlib import Path
 
+from .audio import load_wav_tensor
+from .dialogue import extract_valid_dialogues
 from .preprocess import prepare_input
 from .diarization import diarize
-from .dialogues import summarize
+from .reconstruct import OUTPUT_SAMPLE_RATE, write_conversation_stereo, write_stereo
 from .separation import separate, separate_waveform
-from .reconstruct import write_stereo
-from .audio import load_wav_tensor
 from .separation_backend import load_separation_models
+from core.outputs import save_stereo_wav, write_dialogues_phase, write_json
 
 from core.orchestration.logging_style import StepTimer, get_logger
-from core.outputs import write_json
 
 import argparse
 
@@ -38,6 +38,127 @@ def _no_progress(event: str, value: int) -> None:
     """Pipeline progress is emitted as colored step logs, not tqdm bars."""
 
 
+def _fit_channel(channel, length):
+    if channel.shape[-1] < length:
+        return torch.nn.functional.pad(channel, (0, length - channel.shape[-1]))
+    return channel[..., :length]
+
+
+def _resample_waveform(waveform, input_rate, output_rate):
+    if input_rate == output_rate:
+        return waveform
+    output_length = max(1, round(waveform.shape[-1] * output_rate / input_rate))
+    return torch.nn.functional.interpolate(
+        waveform.unsqueeze(0), size=output_length, mode="linear", align_corners=False,
+    ).squeeze(0)
+
+
+def _run_split_conversation(
+    temp_wav,
+    phase_output_dir,
+    output_root,
+    segments,
+    device,
+    separation_backend,
+    separation_model,
+    num_steps,
+    separate_chunk,
+    output_prefix,
+):
+    waveform, input_sample_rate = load_wav_tensor(temp_wav)
+    dialogues = extract_valid_dialogues(segments)
+    write_dialogues_phase(phase_output_dir, dialogues)
+    write_json(
+        phase_output_dir / "phase_03_dialogues" / "manifest.json",
+        {"count": len(dialogues), "dialogues": []},
+    )
+
+    manifest = []
+    models = None
+    output_sample_rate = OUTPUT_SAMPLE_RATE
+    timeline_sample_rate = None
+    timeline_first = None
+    timeline_second = None
+    if dialogues:
+        models = load_separation_models(device=device, backend=separation_backend, model_id=separation_model)
+
+    try:
+        for index, dialogue in enumerate(dialogues):
+            start_sample = max(0, min(waveform.shape[-1], round(dialogue.start * input_sample_rate)))
+            end_sample = max(start_sample, min(waveform.shape[-1], round(dialogue.end * input_sample_rate)))
+            crop = waveform[..., start_sample:end_sample]
+            if crop.shape[-1] == 0:
+                continue
+            first, second, output_sample_rate = separate_waveform(
+                crop, input_sample_rate, models, num_steps, separate_chunk, _no_progress,
+            )
+            native_output_sample_rate = output_sample_rate
+            if native_output_sample_rate != OUTPUT_SAMPLE_RATE:
+                first = _resample_waveform(first, native_output_sample_rate, OUTPUT_SAMPLE_RATE)
+                second = _resample_waveform(second, native_output_sample_rate, OUTPUT_SAMPLE_RATE)
+                output_sample_rate = OUTPUT_SAMPLE_RATE
+            if timeline_first is None:
+                timeline_sample_rate = output_sample_rate
+                output_length = max(
+                    1, round(waveform.shape[-1] * output_sample_rate / input_sample_rate),
+                )
+                timeline_first = torch.zeros(1, output_length, dtype=waveform.dtype)
+                timeline_second = torch.zeros_like(timeline_first)
+            elif output_sample_rate != timeline_sample_rate:
+                raise ValueError(
+                    "Split separation returned inconsistent sample rates: "
+                    f"{output_sample_rate} and {timeline_sample_rate}"
+                )
+            output_start = max(
+                0, min(timeline_first.shape[-1], round(dialogue.start * output_sample_rate)),
+            )
+            output_end = max(
+                output_start, min(timeline_first.shape[-1], round(dialogue.end * output_sample_rate)),
+            )
+            output_length = output_end - output_start
+            first = _fit_channel(first, output_length)
+            second = _fit_channel(second, output_length)
+            mixture = _resample_waveform(crop, input_sample_rate, output_sample_rate)
+            mixture = _fit_channel(mixture, output_length)
+            conversation_dir = output_root / "conversations" / f"conversation_{index:05d}"
+            metadata = {
+                "conversation_idx": index,
+                "start": dialogue.start,
+                "end": dialogue.end,
+                "duration": dialogue.duration,
+                "speakers": dialogue.speakers,
+                "segments": dialogue.segments,
+                "sample_rate": output_sample_rate,
+                "source_start_sample": start_sample,
+                "source_end_sample": end_sample,
+                "status": "complete",
+            }
+            stereo_path = write_conversation_stereo(
+                conversation_dir, mixture, first, second, output_sample_rate, metadata,
+            )
+            timeline_first[..., output_start:output_end] = first
+            timeline_second[..., output_start:output_end] = second
+            manifest.append({**metadata, "stereo": str(stereo_path), "mixture": str(conversation_dir / "mixture.wav")})
+    finally:
+        if models is not None and hasattr(models, "to"):
+            models.to(torch.device("cpu"))
+
+    if timeline_first is None:
+        timeline_first = torch.zeros(1, max(1, waveform.shape[-1]), dtype=waveform.dtype)
+        timeline_second = torch.zeros_like(timeline_first)
+    root_stereo = Path(output_prefix).parent / "audio.stereo.wav"
+    save_stereo_wav(root_stereo, timeline_first, timeline_second, output_sample_rate)
+    write_json(
+        output_root / "conversations" / "manifest.json",
+        {"output_kind": "conversation_collection", "sample_rate": output_sample_rate, "conversations": manifest},
+    )
+    write_json(
+        phase_output_dir / "phase_03_dialogues" / "manifest.json",
+        {"count": len(manifest), "dialogues": manifest},
+    )
+    return {"stereo": root_stereo, "segments": segments, "conversations": manifest}
+
+
 def run_single_audio(
     audio_path_str,
     diarize_chunk=60.0,
@@ -50,7 +171,8 @@ def run_single_audio(
     output_dir=None,
     runtime_device="auto",
     num_steps=30,
-    scale=False,
+    analyze_diarization=False,
+    split_conversation=False,
 ):
     from .devices import resolve_device
     device = resolve_device(runtime_device, allow_cpu_fallback=True)
@@ -59,7 +181,7 @@ def run_single_audio(
         raise FileNotFoundError(audio_path)
 
     logger = get_logger("duplexchat")
-    logger.info("execution_mode=%s", "per_conversation_scale" if scale else "full_input_debug")
+    logger.info("execution_mode=full_stereo")
     logger.info("Diarization backend=%s model=%s device=%s", diarization_backend, diarization_model, device)
     logger.info("Separation backend=%s model=%s", separation_backend, separation_model or "default")
 
@@ -69,69 +191,31 @@ def run_single_audio(
     with StepTimer(logger, "Step 0: Preprocess"):
         temp_wav = prepare_input(audio_path, phase_output_dir)
 
-    with StepTimer(logger, "Step 1: Speaker Diarization"):
-        diarize_pipeline, segments = diarize(temp_wav, phase_output_dir, diarization_model, diarization_backend, device, diarize_chunk, _no_progress)
-    with StepTimer(logger, "Step 2: Detect two-speaker conversations"):
-        conversations, valid_dialogues = summarize(segments)
-        logger.info("conversations=%d valid_two_speaker_conversations=%d", len(conversations), len(valid_dialogues))
-        write_json(
-            phase_output_dir / "conversations_2spk.json",
-            {
-                "execution_mode": "per_conversation_scale" if scale else "full_input_debug",
-                "conversations": [
-                    {"id": f"conversation_{index:05d}", "start": item.start, "end": item.end,
-                     "duration": item.duration, "speakers": sorted(item.speakers), "segments": item.segments}
-                    for index, item in enumerate(valid_dialogues)
-                ],
-            },
-        )
-
-    if str(device).startswith("cuda"):
-        release_diarization_gpu_memory(diarize_pipeline)
-    del diarize_pipeline
-
-    if scale:
-        waveform, sample_rate = load_wav_tensor(temp_wav)
-        collection_dir = Path(output_prefix).parent / "conversations"
-        with StepTimer(logger, "Step 3: Per-conversation speech separation"):
-            models = load_separation_models(device=device, backend=separation_backend, model_id=separation_model)
-            conversations = []
-            for index, dialogue in enumerate(valid_dialogues):
-                conversation_id = f"conversation_{index:05d}"
-                start = max(0, int(round(dialogue.start * sample_rate)))
-                end = min(waveform.shape[-1], int(round(dialogue.end * sample_rate)))
-                if end <= start:
-                    continue
-                directory = collection_dir / conversation_id
-                directory.mkdir(parents=True, exist_ok=True)
-                mixture = waveform[:, start:end]
-                mixture_path = directory / "mixture.wav"
-                from core.outputs import save_stereo_wav, save_wav
-                save_wav(mixture_path, mixture, sample_rate)
-                spk_a, spk_b, out_sr = separate_waveform(
-                    mixture, sample_rate, models, num_steps, separate_chunk, _no_progress
-                )
-                stereo = directory / "audio.stereo.wav"
-                save_stereo_wav(stereo, spk_a, spk_b, out_sr)
-                record = {
-                    "id": conversation_id, "start": dialogue.start, "end": dialogue.end,
-                    "duration": dialogue.duration, "speakers": sorted(dialogue.speakers),
-                    "segments": dialogue.segments, "mixture": str(mixture_path),
-                    "stereo": str(stereo), "sample_rate": out_sr,
-                }
-                write_json(directory / "metadata.json", record)
-                conversations.append(record)
-                logger.info("Separated %s (%.2fs)", conversation_id, dialogue.duration)
-        write_json(collection_dir / "manifest.json", {"conversations": conversations})
-        logger.info("Saved %d conversation collections: %s", len(conversations), collection_dir)
-        return {"stereo": None, "segments": segments, "valid_dialogues": valid_dialogues, "conversations": conversations}
-    with StepTimer(logger, "Step 3: Full-input speech separation"):
+    segments = []
+    if analyze_diarization or split_conversation:
+        title = "Step 1: Speaker diarization" if split_conversation else "Step 1: Debug speaker diarization"
+        with StepTimer(logger, title):
+            diarize_pipeline, segments = diarize(
+                temp_wav, phase_output_dir, diarization_model, diarization_backend, device, diarize_chunk, _no_progress,
+            )
+        if str(device).startswith("cuda"):
+            release_diarization_gpu_memory(diarize_pipeline)
+        del diarize_pipeline
+    if split_conversation:
+        with StepTimer(logger, "Step 2: Split conversation separation"):
+            result = _run_split_conversation(
+                temp_wav, phase_output_dir, phase_output_dir.parent, segments, device,
+                separation_backend, separation_model, num_steps, separate_chunk, output_prefix,
+            )
+        logger.info("Saved split stereo output: %s", result["stereo"])
+        return result
+    with StepTimer(logger, "Step 2: Full-input speech separation"):
         spk0, spk1, out_sr = separate(temp_wav, device, separation_backend, separation_model, num_steps, separate_chunk, _no_progress)
 
-    with StepTimer(logger, "Step 4: Local reconstruction"):
+    with StepTimer(logger, "Step 3: Local reconstruction"):
         stereo = write_stereo(output_prefix, phase_output_dir, spk0, spk1, out_sr, separation_backend, separation_model)
     logger.info("Saved stereo output: %s", stereo)
-    return {"stereo": stereo, "segments": segments, "valid_dialogues": valid_dialogues}
+    return {"stereo": stereo, "segments": segments}
 
 def main():
     parser = argparse.ArgumentParser(description="Test DuplexChat on a single audio file.")

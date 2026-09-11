@@ -52,5 +52,5 @@ benchmark = ["onnxruntime", "speechbrain>=1.0,<2.0"]
 #   torchcodec = [{ index = "pytorch-cu130" }]
 
 [tool.setuptools]
-packages = ["core", "core.orchestration"]
+packages = ["core", "core.orchestration", "core.stereo_benchmark"]
 py-modules = ["cli"]

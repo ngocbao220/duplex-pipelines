@@ -1,10 +1,13 @@
 import json
 import sys
+import types
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
-from core.orchestration.contract import run_sample, validate_conversation_collection, validate_stereo
+from core.orchestration.contract import run_sample, validate_stereo
+from core.orchestration import worker
 from core.orchestration.process import stream_process
 from core.orchestration.report import comparison_report
 
@@ -34,36 +37,29 @@ def test_core_contract_requires_one_timeline_aligned_stereo_output(tmp_path):
         raise AssertionError("short track must fail validation")
 
 
-def test_conversation_collection_requires_one_stereo_output_per_dialogue(tmp_path):
-    mixture = _wav(tmp_path / "conversation" / "mixture.wav", frames=3200)
-    stereo = _stereo_wav(tmp_path / "conversation" / "audio.stereo.wav", frames=3200)
-    collection = [{"mixture": str(mixture), "stereo": str(stereo)}]
+def test_duplexchat_worker_always_returns_full_stereo_and_uses_debug_only_for_diarization(monkeypatch, tmp_path):
+    captured = {}
+    runner_module = types.ModuleType("duplexchat.runner")
 
-    assert validate_conversation_collection(collection) == 0.2
-    _stereo_wav(stereo, frames=1600)
-    try:
-        validate_conversation_collection(collection)
-    except ValueError as error:
-        assert "timeline" in str(error)
-    else:
-        raise AssertionError("short conversation track must fail validation")
+    def run_single_audio(*_args, **kwargs):
+        captured.update(kwargs)
+        Path(kwargs["output_dir"]).mkdir(parents=True)
+        return {"stereo": tmp_path / "output" / "audio.stereo.wav", "segments": []}
 
+    runner_module.run_single_audio = run_single_audio
+    devices_module = types.ModuleType("duplexchat.devices")
+    devices_module.resolve_device = lambda *_args, **_kwargs: "cpu"
+    package = types.ModuleType("duplexchat")
+    package.__path__ = []
+    monkeypatch.setitem(sys.modules, "duplexchat", package)
+    monkeypatch.setitem(sys.modules, "duplexchat.runner", runner_module)
+    monkeypatch.setitem(sys.modules, "duplexchat.devices", devices_module)
 
-def test_collection_run_does_not_create_invalid_full_input_tracks(tmp_path):
-    source = _wav(tmp_path / "source.wav")
+    stereo, metadata = worker.duplexchat(tmp_path / "input.wav", tmp_path / "output", {"debug": True})
 
-    def collection_adapter(_source, output, _config):
-        mixture = _wav(output / "conversations" / "conversation_00000" / "mixture.wav")
-        stereo = _stereo_wav(output / "conversations" / "conversation_00000" / "audio.stereo.wav")
-        return None, {"output_kind": "conversation_collection", "conversations": [
-            {"mixture": str(mixture), "stereo": str(stereo)}
-        ]}
-
-    result = run_sample("duplexchat", {"key": "sample", "mixture": str(source)}, tmp_path / "output", {}, "code", collection_adapter)
-
-    assert result["status"] == "complete"
-    assert result["audio_sha256"] is None
-    assert not (tmp_path / "output" / "audio.stereo.wav").exists()
+    assert stereo == tmp_path / "output" / "audio.stereo.wav"
+    assert metadata == {"device": "cpu", "execution_mode": "full_stereo", "diarization_debug": True}
+    assert captured["analyze_diarization"] is True
 
 
 def test_core_report_uses_only_common_successes(tmp_path):

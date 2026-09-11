@@ -8,7 +8,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "duplexchat" / "src"))
 
-from duplexchat.dialogue import Dialogue, _split_long_dialogue, split_into_dialogues  # noqa: E402
+from duplexchat.dialogue import Dialogue, _split_long_dialogue, extract_valid_dialogues, split_into_dialogues  # noqa: E402
 from duplexchat.diarization_backend import GlobalSpeakerLinker  # noqa: E402
 from duplexchat import diarization as diarization_phase  # noqa: E402
 
@@ -88,6 +88,19 @@ def test_long_dialogue_keeps_a_short_tail_after_a_silence_boundary():
     chunks = _split_long_dialogue(dialogue, max_duration=600.0, min_duration=10.0)
 
     assert [(chunk.start, chunk.end) for chunk in chunks] == [(0.0, 599.5), (600.0, 605.0)]
+
+
+def test_valid_dialogues_drop_short_chunks_created_by_long_split():
+    segments = [
+        _segment("A", 0.0, 300.0),
+        _segment("B", 300.0, 599.5),
+        _segment("A", 600.0, 602.0),
+        _segment("B", 602.0, 605.0),
+    ]
+
+    dialogues = extract_valid_dialogues(segments)
+
+    assert [(dialogue.start, dialogue.end) for dialogue in dialogues] == [(0.0, 599.5)]
 
 
 class _MeanEmbeddingExtractor:

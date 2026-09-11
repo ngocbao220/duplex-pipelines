@@ -4,6 +4,9 @@ import cli
 import importlib
 import sys
 from pathlib import Path
+
+import pytest
+
 from core.orchestration.cli import build_pipeline_parser
 
 
@@ -14,6 +17,23 @@ def test_each_pipeline_cli_exposes_single_and_otospeech_commands():
         otospeech_args = parser.parse_args(["otospeech", "--max-samples", "1"])
         assert single_args.command == "single"
         assert otospeech_args.command == "otospeech"
+
+
+def test_duplexchat_cli_exposes_split_conversation_flag():
+    parser = build_pipeline_parser("duplexchat")
+
+    args = parser.parse_args([
+        "single", "--input", "mixture.wav", "--output-dir", "out", "--split_conversation",
+    ])
+
+    assert args.split_conversation is True
+
+
+def test_duplexchat_cli_rejects_removed_conversation_scale_option():
+    parser = build_pipeline_parser("duplexchat")
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["single", "--input", "mixture.wav", "--output-dir", "out", "--scale", "true"])
 
 
 def test_root_cli_exposes_one_explicit_comparison_command():

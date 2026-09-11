@@ -174,6 +174,8 @@ def extract_valid_dialogues(
             if dlg.duration < min_duration_seconds:
                 continue
             for chunk in _split_long_dialogue(dlg, max_duration_seconds, min_duration_seconds):
+                if chunk.duration < min_duration_seconds:
+                    continue
                 if is_balanced_dialogue(chunk, max_single_speaker_ratio):
                     result.append(chunk)
     return result

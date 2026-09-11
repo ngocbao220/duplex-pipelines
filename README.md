@@ -32,7 +32,7 @@ uv run --project pipeline/cholimex python -m cholimex single \
   --input mixture.wav --output-dir outputs/cholimex --debug
 
 uv run --project pipeline/duplexchat python -m duplexchat single \
-  --input mixture.wav --output-dir outputs/duplexchat --scale false --debug
+  --input mixture.wav --output-dir outputs/duplexchat --debug
 
 uv run --project pipeline/sommelier python -m sommelier single \
   --input mixture.wav --output-dir outputs/sommelier --debug
@@ -41,13 +41,10 @@ uv run --project pipeline/sommelier python -m sommelier single \
 `audio.stereo.wav`, `run.json`, và `benchmark.json` nằm trong `--output-dir`.
 Hai nguồn tách nằm lần lượt ở kênh 0 và 1; tên file không gán danh tính speaker.
 Nếu input không có đúng hai speaker, Vilier/Sommelier fail thay vì tạo output giả.
-`duplexchat --scale true` chỉ xuất một WAV stereo cho từng conversation, không
-có output full-duration.
-
 Với `--debug`, Cholimex ghi từng overlap tại
 `debug/overlaps/<id>/{mixture,audio.stereo}.wav`; Vilier giữ các native source
 debug ở `debug/overlaps/<id>/{mixture,source_01,source_02}.wav`.
-DuplexChat ghi `debug/conversations_2spk.json`.
+DuplexChat ghi raw diarization/linking artifacts trong `debug/phase_02_diarization/`.
 
 ## Metrics và benchmark
 

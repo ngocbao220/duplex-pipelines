@@ -36,3 +36,4 @@ reports/
 
 compare/
 otospeech-output/
+*.wav
