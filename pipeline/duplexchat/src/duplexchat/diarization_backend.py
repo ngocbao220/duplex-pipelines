@@ -221,21 +221,26 @@ class SpeechBrainEmbeddingExtractor:
 
 
 class GlobalSpeakerLinker:
-    """Assign chunk-local diarization labels to stable global speaker labels."""
+    """Assign chunk-local labels to the two known participants in a DuplexChat recording."""
 
-    def __init__(self, extractor: EmbeddingExtractor, similarity_threshold: float = 0.7) -> None:
+    def __init__(
+        self, extractor: EmbeddingExtractor, similarity_threshold: float = 0.7, expected_speakers: int = 2,
+    ) -> None:
         self.extractor = extractor
         self.similarity_threshold = similarity_threshold
+        self.expected_speakers = expected_speakers
         self._embeddings: dict[str, list[torch.Tensor]] = {}
         self._next_speaker_index = 0
         self._embedded_labels = 0
         self._matched_labels = 0
         self._new_labels = 0
+        self._forced_matches = 0
 
     def link(
         self, local_segments: list[dict], chunk_waveform: torch.Tensor, sample_rate: int,
     ) -> dict[str, str]:
         mapping: dict[str, str] = {}
+        assigned_in_chunk: set[str] = set()
         for speaker in sorted({segment["speaker"] for segment in local_segments}):
             speaker_segments = [segment for segment in local_segments if segment["speaker"] == speaker]
             embeddings = [
@@ -250,37 +255,53 @@ class GlobalSpeakerLinker:
                 )
             self._embedded_labels += 1
             local_embedding = torch.stack(embeddings).mean(dim=0)
-            global_speaker = self._best_match(local_embedding)
+            global_speaker = self._best_match(local_embedding, excluded=assigned_in_chunk)
             if global_speaker is None:
-                global_speaker = f"SPEAKER_{self._next_speaker_index:02d}"
-                self._next_speaker_index += 1
-                self._embeddings[global_speaker] = []
-                self._new_labels += 1
+                if len(self._embeddings) < self.expected_speakers:
+                    global_speaker = f"SPEAKER_{self._next_speaker_index:02d}"
+                    self._next_speaker_index += 1
+                    self._embeddings[global_speaker] = []
+                    self._new_labels += 1
+                else:
+                    # A third local label is diarization fragmentation: the input contract has two people.
+                    global_speaker = self._best_match(
+                        local_embedding, excluded=set(), require_threshold=False,
+                    )
+                    self._forced_matches += 1
             else:
                 self._matched_labels += 1
             self._embeddings[global_speaker].append(local_embedding)
             mapping[speaker] = global_speaker
+            assigned_in_chunk.add(global_speaker)
         return mapping
 
     def diagnostics(self) -> dict:
         return {
             "method": "speechbrain_ecapa_cosine",
             "similarity_threshold": self.similarity_threshold,
+            "expected_speakers": self.expected_speakers,
             "embedding_labels": self._embedded_labels,
             "global_speakers": len(self._embeddings),
             "matched_labels": self._matched_labels,
             "new_labels": self._new_labels,
+            "forced_matches": self._forced_matches,
         }
 
-    def _best_match(self, embedding: torch.Tensor) -> str | None:
+    def _best_match(
+        self, embedding: torch.Tensor, excluded: set[str], require_threshold: bool = True,
+    ) -> str | None:
         best_speaker: str | None = None
         best_score = -1.0
         for speaker, embeddings in self._embeddings.items():
+            if speaker in excluded:
+                continue
             centroid = torch.stack(embeddings).mean(dim=0)
             score = float(F.cosine_similarity(embedding.reshape(-1), centroid.reshape(-1), dim=0))
             if score > best_score:
                 best_speaker, best_score = speaker, score
-        return best_speaker if best_score >= self.similarity_threshold else None
+        if best_speaker is None:
+            return None
+        return best_speaker if not require_threshold or best_score >= self.similarity_threshold else None
 
 
 def _slice_segment(waveform: torch.Tensor, segment: dict, sample_rate: int) -> torch.Tensor:

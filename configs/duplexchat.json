@@ -1,6 +1,6 @@
 {
-  "diarize_chunk": 60.0,
-  "separate_chunk": 30.0,
+  "diarize_chunk": 90.0,
+  "separate_chunk": 90.0,
   "diarization_backend": "auto",
   "diarization_model": "pyannote/speaker-diarization-community-1",
   "separation_backend": "dialoguesidon",

@@ -109,6 +109,38 @@ def test_global_linker_keeps_one_identity_when_chunk_local_labels_reset():
     assert linker.diagnostics()["new_labels"] == 1
 
 
+def test_global_linker_never_merges_distinct_local_speakers_in_one_chunk():
+    linker = GlobalSpeakerLinker(_MeanEmbeddingExtractor(), similarity_threshold=0.7)
+    local_speakers = [
+        _segment("SPEAKER_00", 0.0, 1.0),
+        _segment("SPEAKER_01", 1.0, 2.0),
+    ]
+
+    mapping = linker.link(local_speakers, torch.ones((1, 32_000)), 16_000)
+
+    assert mapping["SPEAKER_00"] != mapping["SPEAKER_01"]
+    assert linker.diagnostics()["global_speakers"] == 2
+
+
+def test_global_linker_caps_a_two_person_recording_at_two_global_speakers():
+    linker = GlobalSpeakerLinker(_MeanEmbeddingExtractor(), similarity_threshold=0.7)
+    first_chunk = [
+        _segment("SPEAKER_00", 0.0, 1.0),
+        _segment("SPEAKER_01", 1.0, 2.0),
+    ]
+    noisy_chunk = [
+        _segment("SPEAKER_00", 0.0, 1.0),
+        _segment("SPEAKER_01", 1.0, 2.0),
+        _segment("SPEAKER_02", 2.0, 3.0),
+    ]
+
+    linker.link(first_chunk, torch.ones((1, 32_000)), 16_000)
+    mapping = linker.link(noisy_chunk, torch.ones((1, 48_000)), 16_000)
+
+    assert set(mapping.values()) <= {"SPEAKER_00", "SPEAKER_01"}
+    assert linker.diagnostics()["global_speakers"] == 2
+
+
 def test_diarization_phase_writes_linking_diagnostics(monkeypatch, tmp_path):
     pipeline = object()
     diagnostics = {"method": "speechbrain_ecapa_cosine", "embedding_labels": 2}
