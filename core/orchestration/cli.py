@@ -18,11 +18,6 @@ def build_pipeline_parser(name: str) -> argparse.ArgumentParser:
     single.add_argument("--debug", action="store_true")
     if name == "duplexchat":
         single.add_argument("--split_conversation", action="store_true")
-        single.add_argument("--diarization-backend", default="auto")
-        single.add_argument(
-            "--diarization-model",
-            default="nvidia/diar_streaming_sortformer_4spk-v2.1",
-        )
     single.add_argument("--gt-speaker-a", type=Path)
     single.add_argument("--gt-speaker-b", type=Path)
 
@@ -53,8 +48,6 @@ def run_pipeline_command(name: str, argv: list[str] | None = None) -> int:
         from .single import run_single
         return run_single(name, args.input.resolve(), args.output_dir.resolve(), args.debug,
                            getattr(args, "split_conversation", False),
-                           getattr(args, "diarization_backend", "auto"),
-                           getattr(args, "diarization_model", None),
                            args.gt_speaker_a.resolve() if args.gt_speaker_a else None,
                           args.gt_speaker_b.resolve() if args.gt_speaker_b else None)
 

@@ -29,19 +29,6 @@ def test_duplexchat_cli_exposes_split_conversation_flag():
     assert args.split_conversation is True
 
 
-def test_duplexchat_cli_exposes_diarization_options():
-    parser = build_pipeline_parser("duplexchat")
-
-    args = parser.parse_args([
-        "single", "--input", "mixture.wav", "--output-dir", "out",
-        "--diarization-backend", "sortformer",
-        "--diarization-model", "nvidia/diar_streaming_sortformer_4spk-v2.1",
-    ])
-
-    assert args.diarization_backend == "sortformer"
-    assert args.diarization_model == "nvidia/diar_streaming_sortformer_4spk-v2.1"
-
-
 def test_duplexchat_cli_rejects_removed_conversation_scale_option():
     parser = build_pipeline_parser("duplexchat")
 
