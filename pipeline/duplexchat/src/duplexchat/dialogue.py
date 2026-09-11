@@ -85,14 +85,20 @@ def _two_speaker_runs(segments: list[dict]) -> list[list[dict]]:
 
 def is_balanced_dialogue(dialogue: Dialogue, max_single_speaker_ratio: float) -> bool:
     """Return True if no single speaker exceeds max_single_speaker_ratio of total turn time."""
+    ratios = speaker_time_ratios(dialogue)
+    return bool(ratios) and max(ratios.values()) <= max_single_speaker_ratio
+
+
+def speaker_time_ratios(dialogue: Dialogue) -> dict[str, float]:
+    """Return each speaker's share of diarized speech time in a dialogue."""
     speaker_duration: dict[str, float] = {}
     for seg in dialogue.segments:
         dur = seg["end"] - seg["start"]
         speaker_duration[seg["speaker"]] = speaker_duration.get(seg["speaker"], 0.0) + dur
     total = sum(speaker_duration.values())
     if total <= 0:
-        return False
-    return max(speaker_duration.values()) / total <= max_single_speaker_ratio
+        return {}
+    return {speaker: duration / total for speaker, duration in speaker_duration.items()}
 
 
 def _split_long_dialogue(

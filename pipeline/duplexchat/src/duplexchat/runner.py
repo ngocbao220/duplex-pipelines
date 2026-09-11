@@ -7,7 +7,7 @@ import torch
 from pathlib import Path
 
 from .audio import load_wav_tensor
-from .dialogue import extract_valid_dialogues
+from .dialogue import extract_valid_dialogues, speaker_time_ratios
 from .preprocess import prepare_input
 from .diarization import diarize
 from .reconstruct import OUTPUT_SAMPLE_RATE, write_conversation_stereo, write_stereo
@@ -64,9 +64,25 @@ def _run_split_conversation(
     num_steps,
     separate_chunk,
     output_prefix,
+    logger,
 ):
     waveform, input_sample_rate = load_wav_tensor(temp_wav)
     dialogues = extract_valid_dialogues(segments)
+    logger.info("Diarization produced %d valid conversations", len(dialogues))
+    for index, dialogue in enumerate(dialogues):
+        ratios = speaker_time_ratios(dialogue)
+        ratio_text = ", ".join(
+            f"{speaker}={ratio * 100:.1f}%" for speaker, ratio in sorted(ratios.items())
+        )
+        logger.info(
+            "Conversation %05d: start=%.2fs end=%.2fs duration=%.2fs speakers=%s speech_ratio={%s}",
+            index,
+            dialogue.start,
+            dialogue.end,
+            dialogue.duration,
+            ",".join(sorted(dialogue.speakers)),
+            ratio_text,
+        )
     write_dialogues_phase(phase_output_dir, dialogues)
     write_json(
         phase_output_dir / "phase_03_dialogues" / "manifest.json",
@@ -206,6 +222,7 @@ def run_single_audio(
             result = _run_split_conversation(
                 temp_wav, phase_output_dir, phase_output_dir.parent, segments, device,
                 separation_backend, separation_model, num_steps, separate_chunk, output_prefix,
+                logger,
             )
         logger.info("Saved split stereo output: %s", result["stereo"])
         return result
