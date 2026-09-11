@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import tomllib
+import sys
 from pathlib import Path
 
 from core.config import load_config
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "duplexchat" / "src"))
+from duplexchat.model_options import infer_diarization_backend, resolve_model_alias, DIARIZATION_MODELS
 
 
 def test_shared_config_contains_only_integrated_runtime_settings(tmp_path):
@@ -23,6 +27,13 @@ def test_shared_config_contains_only_integrated_runtime_settings(tmp_path):
     assert config.separation_num_steps == 8
     assert config.cholimex_overlap_padding == 0.2
     assert config.cholimex_speaker_assignment_mode == "relative_similarity"
+
+
+def test_streaming_sortformer_v21_model_option_resolves_to_sortformer():
+    model = resolve_model_alias("sortformer-streaming-v2.1", DIARIZATION_MODELS)
+
+    assert model == "nvidia/diar_streaming_sortformer_4spk-v2.1"
+    assert infer_diarization_backend(model) == "sortformer"
 
 
 def test_shared_config_rejects_removed_crawler_settings(tmp_path):

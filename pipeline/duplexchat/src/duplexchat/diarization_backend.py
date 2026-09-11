@@ -103,7 +103,7 @@ def _load_sortformer_pipeline(model: str, device: str = "cuda") -> SortformerDia
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(
             "Sortformer diarization requires NVIDIA NeMo. Install the sortformer "
-            "dependency profile before using nvidia/diar_sortformer_4spk-v1."
+            "dependency profile before using an NVIDIA Sortformer model."
         ) from exc
 
     diar_model = SortformerEncLabelModel.from_pretrained(model)

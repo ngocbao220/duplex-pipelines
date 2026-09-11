@@ -7,7 +7,7 @@ import torch
 from pathlib import Path
 
 from .audio import load_wav_tensor
-from .dialogue import extract_valid_dialogues, speaker_time_ratios
+from .dialogue import dialogue_filter_summary, extract_valid_dialogues, speaker_time_ratios
 from .preprocess import prepare_input
 from .diarization import diarize
 from .reconstruct import OUTPUT_SAMPLE_RATE, write_conversation_stereo, write_stereo
@@ -67,6 +67,18 @@ def _run_split_conversation(
     logger,
 ):
     waveform, input_sample_rate = load_wav_tensor(temp_wav)
+    filter_summary = dialogue_filter_summary(segments)
+    logger.info(
+        "Conversation filtering: segments=%d speakers=%d silence_groups=%d "
+        "two_speaker_runs=%d rejected_short=%d rejected_imbalanced=%d accepted=%d",
+        filter_summary["segments"],
+        filter_summary["speakers"],
+        filter_summary["silence_groups"],
+        filter_summary["two_speaker_runs"],
+        filter_summary["rejected_short"],
+        filter_summary["rejected_imbalanced"],
+        filter_summary["accepted"],
+    )
     dialogues = extract_valid_dialogues(segments)
     logger.info("Diarization produced %d valid conversations", len(dialogues))
     for index, dialogue in enumerate(dialogues):

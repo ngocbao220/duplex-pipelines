@@ -101,6 +101,37 @@ def speaker_time_ratios(dialogue: Dialogue) -> dict[str, float]:
     return {speaker: duration / total for speaker, duration in speaker_duration.items()}
 
 
+def dialogue_filter_summary(segments: list[dict]) -> dict[str, int]:
+    """Count the stages and rejection reasons used by conversation filtering."""
+    groups = split_into_dialogues(segments, gap_seconds=5.0)
+    two_speaker_runs = [run for group in groups for run in _two_speaker_runs(group.segments)]
+    short = 0
+    imbalanced = 0
+    accepted = 0
+    for run in two_speaker_runs:
+        dialogue = _dialogue_from_segments(run)
+        if dialogue.duration < 10.0:
+            short += 1
+            continue
+        chunks = _split_long_dialogue(dialogue, 600.0, 10.0)
+        for chunk in chunks:
+            if chunk.duration < 10.0:
+                short += 1
+            elif not is_balanced_dialogue(chunk, 0.8):
+                imbalanced += 1
+            else:
+                accepted += 1
+    return {
+        "segments": len(segments),
+        "speakers": len({str(segment["speaker"]) for segment in segments}),
+        "silence_groups": len(groups),
+        "two_speaker_runs": len(two_speaker_runs),
+        "rejected_short": short,
+        "rejected_imbalanced": imbalanced,
+        "accepted": accepted,
+    }
+
+
 def _split_long_dialogue(
     dlg: Dialogue, max_duration: float, min_duration: float,
 ) -> list[Dialogue]:
