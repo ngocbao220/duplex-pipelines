@@ -9,7 +9,6 @@ import json
 import io
 import threading
 from collections.abc import Callable
-from pathlib import Path
 
 import torch
 import torchaudio.compliance.kaldi as kaldi
@@ -20,13 +19,11 @@ from huggingface_hub import hf_hub_download
 from .model_options import SEPARATION_MODELS, resolve_model_alias
 
 REPO_ID = "sarulab-speech/DialogueSidon"
-REPO_ID_MOSSFORMER2 = "alibabasglab/MossFormer2_SS_16K"
-REPO_ID_SEPFORMER = "speechbrain/sepformer-wsj02mix"
 MODEL_FILES = ["ssl_encoder.pt2", "diffusion_head.pt2", "vae_decoder.pt2", "metadata.json"]
 SAMPLE_RATE_IN = 16_000
 DIALOGUESIDON_SAMPLE_RATE_IN = 24_000
-CHUNK_SECONDS = 30.0
-OVERLAP_SECONDS = 5.0
+CHUNK_SECONDS = 120.0
+OVERLAP_SECONDS = 10.0
 
 _cache: dict = {}
 _cache_lock = threading.Lock()
@@ -105,13 +102,7 @@ def load_separation_models(
     model_id = resolve_model_alias(model_id, SEPARATION_MODELS)
     if backend_norm == "dialoguesidon":
         return _load_dialoguesidon_models(device, model_id)
-    if backend_norm == "sepformer":
-        return _load_sepformer_models(device, model_id)
-    if backend_norm == "mossformer2":
-        return _load_mossformer2_models(device, model_id)
-    raise ValueError(
-        f"Unsupported separation backend '{backend}'. Use dialoguesidon, sepformer, or mossformer2."
-    )
+    raise ValueError(f"Unsupported separation backend '{backend}'. Use dialoguesidon.")
 
 
 def _load_dialoguesidon_models(device: str = "cuda", model_id: str | None = None) -> dict:
@@ -168,77 +159,6 @@ def _load_dialoguesidon_models(device: str = "cuda", model_id: str | None = None
         }
         _cache[cache_key] = models
         return models
-
-
-def _load_mossformer2_models(device: str = "cuda", model_id: str | None = None) -> dict:
-    """Load MossFormer2 through ClearerVoice-Studio when available.
-
-    The Hugging Face repo publishes the 16 kHz checkpoint only. Runtime inference
-    still needs a compatible ClearerVoice-Studio/MossFormer2 implementation.
-    """
-    repo_id = model_id or REPO_ID_MOSSFORMER2
-    resolved = device if (device != "cuda" or torch.cuda.is_available()) else "cpu"
-    cache_key = ("mossformer2", repo_id, resolved)
-    if cache_key in _cache:
-        return _cache[cache_key]
-
-    checkpoint = hf_hub_download(repo_id=repo_id, filename="last_best_checkpoint.pt")
-    try:
-        from clearvoice import ClearVoice  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(
-            "MossFormer2 backend requires a compatible ClearerVoice-Studio "
-            "installation exposing `clearvoice.ClearVoice`. Install that stack "
-            "in a separate environment or select separation.backend=dialoguesidon."
-        ) from exc
-
-    model = ClearVoice(
-        task="speech_separation",
-        model_names=["MossFormer2_SS_16K"],
-        checkpoint_path=checkpoint,
-    )
-    models = {
-        "backend": "mossformer2",
-        "model_id": repo_id,
-        "checkpoint": checkpoint,
-        "model": model,
-        "sample_rate": SAMPLE_RATE_IN,
-        "device": torch.device(resolved),
-    }
-    _cache[cache_key] = models
-    return models
-
-
-def _load_sepformer_models(device: str = "cuda", model_id: str | None = None) -> dict:
-    repo_id = model_id or REPO_ID_SEPFORMER
-    resolved = device if (device != "cuda" or torch.cuda.is_available()) else "cpu"
-    cache_key = ("sepformer", repo_id, resolved)
-    if cache_key in _cache:
-        return _cache[cache_key]
-
-    try:
-        from speechbrain.inference.separation import SepformerSeparation
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(
-            "SepFormer backend requires speechbrain. Install the sepformer "
-            "dependency profile before selecting separation.backend=sepformer."
-        ) from exc
-
-    torch_device = torch.device(resolved)
-    model = SepformerSeparation.from_hparams(
-        source=repo_id,
-        savedir=str(Path.home() / ".cache" / "speechbrain" / repo_id.replace("/", "_")),
-        run_opts={"device": str(torch_device)},
-    )
-    models = {
-        "backend": "sepformer",
-        "model_id": repo_id,
-        "model": model,
-        "sample_rate": SAMPLE_RATE_IN,
-        "device": torch_device,
-    }
-    _cache[cache_key] = models
-    return models
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -388,31 +308,14 @@ def run_separation(
     sample_rate: int,
     num_steps: int,
     models: dict,
-    chunk_seconds: float = 30.0,
-    overlap_seconds: float = 5.0,
+    chunk_seconds: float = CHUNK_SECONDS,
+    overlap_seconds: float = OVERLAP_SECONDS,
     progress_callback: Callable[[str, int], None] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, int]:
     """Separate a (1, T) mono waveform into two speaker tracks.
 
     Returns (spk0, spk1, out_sr) where each track is a (1, T) CPU float32 tensor.
     """
-    if models.get("backend") == "sepformer":
-        if progress_callback is not None:
-            progress_callback("start", 1)
-        result = _run_sepformer_separation(wav, sample_rate, models)
-        if progress_callback is not None:
-            progress_callback("advance", 1)
-            progress_callback("close", 0)
-        return result
-    if models.get("backend") == "mossformer2":
-        if progress_callback is not None:
-            progress_callback("start", 1)
-        result = _run_mossformer2_separation(wav, sample_rate, models)
-        if progress_callback is not None:
-            progress_callback("advance", 1)
-            progress_callback("close", 0)
-        return result
-
     device = models["device"]
     out_sr: int = models["sample_rate"]
     input_sample_rate = int(models.get("input_sample_rate", SAMPLE_RATE_IN))
@@ -506,58 +409,3 @@ def run_separation(
     if progress_callback is not None:
         progress_callback("close", 0)
     return spk0, spk1, out_sr
-
-
-def _run_sepformer_separation(
-    wav: torch.Tensor,
-    sample_rate: int,
-    models: dict,
-) -> tuple[torch.Tensor, torch.Tensor, int]:
-    if sample_rate != SAMPLE_RATE_IN:
-        wav = F_audio.resample(wav, sample_rate, SAMPLE_RATE_IN)
-    model = models["model"]
-    device = models["device"]
-    mixture = wav.to(device)
-    output = model.separate_batch(mixture)
-    separated = torch.as_tensor(output, dtype=torch.float32)
-    if separated.ndim == 3 and separated.shape[0] == 1 and separated.shape[-1] >= 2:
-        tracks = separated[0].transpose(0, 1)
-    elif separated.ndim == 3 and separated.shape[1] >= 2:
-        tracks = separated[0]
-    elif separated.ndim == 2 and separated.shape[0] >= 2:
-        tracks = separated
-    else:
-        raise RuntimeError(f"SepFormer returned unsupported shape {tuple(separated.shape)}")
-    return tracks[0:1].cpu(), tracks[1:2].cpu(), SAMPLE_RATE_IN
-
-
-def _run_mossformer2_separation(
-    wav: torch.Tensor,
-    sample_rate: int,
-    models: dict,
-) -> tuple[torch.Tensor, torch.Tensor, int]:
-    """Run MossFormer2 and normalize the result to the common adapter contract."""
-    if sample_rate != SAMPLE_RATE_IN:
-        wav = F_audio.resample(wav, sample_rate, SAMPLE_RATE_IN)
-    model = models["model"]
-    try:
-        output = model(wav.squeeze(0).cpu().numpy(), online_write=False)
-    except TypeError:
-        output = model(wav.squeeze(0).cpu().numpy())
-
-    separated = output
-    if isinstance(output, dict):
-        separated = output.get("output") or output.get("output_wav") or output.get("output_pcm_list")
-    if separated is None:
-        raise RuntimeError("MossFormer2 returned no separated audio")
-
-    tracks = []
-    for track in separated[:2]:
-        if isinstance(track, bytes):
-            arr = torch.frombuffer(bytearray(track), dtype=torch.int16).float() / 32768.0
-        else:
-            arr = torch.as_tensor(track, dtype=torch.float32).reshape(-1)
-        tracks.append(arr.unsqueeze(0).cpu())
-    if len(tracks) < 2:
-        raise RuntimeError("MossFormer2 returned fewer than two speaker tracks")
-    return tracks[0], tracks[1], SAMPLE_RATE_IN

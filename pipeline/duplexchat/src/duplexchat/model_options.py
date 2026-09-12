@@ -14,8 +14,6 @@ DIARIZATION_MODELS = {
 
 SEPARATION_MODELS = {
     "dialoguesidon": "sarulab-speech/DialogueSidon",
-    "sepformer": "speechbrain/sepformer-wsj02mix",
-    "mossformer2": "alibabasglab/MossFormer2_SS_16K",
 }
 
 

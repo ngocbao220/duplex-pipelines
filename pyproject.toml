@@ -32,7 +32,7 @@ diarization-sortformer = [
 ]
 separation-dialoguesidon = ["diffusers", "huggingface_hub"]
 separation-sepformer = ["speechbrain>=1.0,<2.0"]
-benchmark = ["onnxruntime", "speechbrain>=1.0,<2.0"]
+benchmark = ["onnxruntime", "speechbrain>=1.0,<2.0", "librosa>=0.10"]
 
 # torch / torchaudio / torchcodec resolve from PyPI by default so `uv sync`
 # works on any machine. To pin a specific CUDA build, add a PyTorch wheel index

@@ -10,7 +10,7 @@ from core.orchestration.logging_style import get_logger
 from core.outputs import write_diarization_phase, write_json
 
 
-def diarize(audio: Path, output_dir: Path, model: str, backend: str, device: str, chunk: float, progress):
+def diarize(audio: Path, output_dir: Path, model: str, backend: str, device: str, chunk: float | None, progress):
     model_instance = load_diarization_pipeline(model, device=device, backend=backend)
     diagnostics: dict = {}
     try:

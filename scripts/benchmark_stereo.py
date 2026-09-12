@@ -4,18 +4,28 @@
 import argparse
 from pathlib import Path
 
-from core.stereo_benchmark.runner import print_summary, run_benchmark
+from core.stereo_benchmark.report import render_tables
+from core.stereo_benchmark.runner import print_summary, run_benchmark, run_corpus_benchmark
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--audio", type=Path, required=True, help="Two-channel speaker-separated audio")
+    input_mode = parser.add_mutually_exclusive_group(required=True)
+    input_mode.add_argument("--audio", type=Path, help="One two-channel speaker-separated audio file")
+    input_mode.add_argument("--corpus", type=Path, help="Directory recursively containing stereo audio files")
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/benchmark"))
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
+    parser.add_argument("--dnsmos-model-dir", type=Path, default=Path("models/dnsmos"), help="Directory containing Microsoft's sig_bak_ovr.onnx and model_v8.onnx")
     parser.add_argument("--debug", action="store_true", help="Write separated channels and detailed event files")
     args = parser.parse_args()
-    report, report_path = run_benchmark(args.audio, args.output_dir, args.device, args.debug)
-    print_summary(report, report_path)
+    if args.audio:
+        report, report_path = run_benchmark(args.audio, args.output_dir, args.device, args.debug, args.dnsmos_model_dir)
+        print_summary(report, report_path)
+    else:
+        report, report_path = run_corpus_benchmark(args.corpus, args.output_dir, args.device, args.debug, args.dnsmos_model_dir)
+        print("Pipeline: Stereo Full-Duplex Corpus Benchmark\n")
+        print(render_tables(report["summary"]))
+        print(f"\nCandidates: {report['candidate_count']} | Successful: {report['summary']['sample_count']}\nJSON report: {report_path}")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -21,16 +22,25 @@ def _per_channel(metric: Callable[[np.ndarray, int], dict], left: np.ndarray, ri
     return result
 
 
-def acoustic_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, device: str) -> dict:
+def acoustic_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, device: str, dnsmos_model_dir: Path | None = None) -> dict:
     """Compute reference-free SQUIM where its bundled model is available.
 
-    DNSMOS is intentionally not approximated: the report states unavailable until
-    a compatible DNSMOS runtime/model is installed.
+    DNSMOS runs only when both official P.835 ONNX assets are available locally.
     """
     return {
-        "dnsmos": {"left": unavailable("DNSMOS runtime is not installed"), "right": unavailable("DNSMOS runtime is not installed")},
+        "dnsmos": _dnsmos_metrics(left, right, sample_rate, dnsmos_model_dir),
         "squim": _per_channel(lambda audio, sr: _squim(audio, sr, device), left, right, sample_rate),
     }
+
+
+def _dnsmos_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, model_dir: Path | None) -> dict:
+    if model_dir is None:
+        missing = unavailable("DNSMOS model directory was not configured")
+        return {"left": missing, "right": missing}
+    from .dnsmos import DNSMOSScorer
+
+    scorer = DNSMOSScorer(model_dir)
+    return _per_channel(scorer.score, left, right, sample_rate)
 
 
 @lru_cache(maxsize=2)

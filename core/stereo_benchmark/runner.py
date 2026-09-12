@@ -20,6 +20,10 @@ from .dynamics import (
     analyze_turns, inactive_channel_energy_ratio_db,
 )
 from .models import acoustic_metrics, speaker_metrics
+from .report import flatten_report, render_tables, summarize_reports
+
+
+SUPPORTED_AUDIO_SUFFIXES = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
 
 
 def resolve_device(requested: str) -> str:
@@ -32,7 +36,7 @@ def resolve_device(requested: str) -> str:
     return "cpu"
 
 
-def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debug: bool = False) -> tuple[dict, Path]:
+def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debug: bool = False, dnsmos_model_dir: Path | None = Path("models/dnsmos")) -> tuple[dict, Path]:
     """Run reference-free diagnostics for a single, two-channel WAV/audio file."""
     audio = load_stereo(audio_path)
     output_dir = Path(output_dir)
@@ -53,7 +57,7 @@ def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debu
             "duration_sec": audio.duration_sec, "samples": audio.frames, "channels": 2,
             "left": "estimated speaker track 1", "right": "estimated speaker track 2",
         },
-        "acoustic_quality": acoustic_metrics(audio.left, audio.right, audio.sample_rate, selected_device),
+        "acoustic_quality": acoustic_metrics(audio.left, audio.right, audio.sample_rate, selected_device, dnsmos_model_dir),
         "speaker_identity": speaker_metrics(audio.left, audio.right, audio.sample_rate, left_mask, right_mask, frame_sec, selected_device),
         "speech_activity": {"vad": "energy_vad", "left_threshold_dbfs": left_threshold, "right_threshold_dbfs": right_threshold, **activity},
         "turn_taking": {key: value for key, value in dynamics.items() if key not in {"turns", "all_talk_spurts", "transitions", "backchannel_candidates"}},
@@ -68,6 +72,7 @@ def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debu
     timeline_path = output_dir / "timeline.json"
     _write_json(report_path, report)
     _write_json(timeline_path, timeline)
+    (output_dir / "summary.md").write_text(render_tables(summarize_reports([report])) + "\n", encoding="utf-8")
     if debug:
         sf.write(output_dir / "left.wav", audio.left, audio.sample_rate)
         sf.write(output_dir / "right.wav", audio.right, audio.sample_rate)
@@ -79,23 +84,45 @@ def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debu
     return report, report_path
 
 
+def discover_corpus_audio(corpus_dir: Path) -> list[Path]:
+    """Recursively find audio candidates; per-file validation decides stereo eligibility."""
+    root = Path(corpus_dir)
+    if not root.is_dir():
+        raise NotADirectoryError(f"Corpus directory does not exist: {root}")
+    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in SUPPORTED_AUDIO_SUFFIXES)
+
+
+def run_corpus_benchmark(corpus_dir: Path, output_dir: Path, device: str = "auto", debug: bool = False, dnsmos_model_dir: Path | None = Path("models/dnsmos")) -> tuple[dict, Path]:
+    """Benchmark all audio candidates, retaining per-file failures instead of aborting a corpus."""
+    corpus_dir, output_dir = Path(corpus_dir), Path(output_dir)
+    candidates = discover_corpus_audio(corpus_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    reports, samples, rows = [], [], []
+    for index, audio_path in enumerate(candidates):
+        source = str(audio_path.relative_to(corpus_dir))
+        file_dir = output_dir / "files" / f"{index:06d}"
+        try:
+            report, report_path = run_benchmark(audio_path, file_dir, device, debug, dnsmos_model_dir)
+            reports.append(report)
+            samples.append({"source": source, "status": "ok", "report": str(report_path.relative_to(output_dir))})
+            rows.append(flatten_report(report, source))
+        except Exception as error:
+            message = f"{type(error).__name__}: {error}"
+            samples.append({"source": source, "status": "failed", "error": message})
+            rows.append({"source": source, "status": "failed", "error": message})
+    summary = summarize_reports(reports)
+    corpus_report = {"input": str(corpus_dir.resolve()), "candidate_count": len(candidates), "summary": summary, "samples": samples}
+    report_path = output_dir / "corpus_report.json"
+    _write_json(report_path, corpus_report)
+    (output_dir / "summary.md").write_text(render_tables(summary) + "\n", encoding="utf-8")
+    _write_csv(output_dir / "per_file.csv", rows)
+    return corpus_report, report_path
+
+
 def print_summary(report: dict, report_path: Path) -> None:
-    info, activity, turns = report["input"], report["speech_activity"], report["turn_taking"]
     print("Pipeline: Stereo Full-Duplex Benchmark\n")
-    print(f"Input: {info['path']}\nDuration: {info['duration_sec']:.2f} s | Sample rate: {info['sample_rate']} Hz | Channels: 2")
-    print("\nSpeech activity")
-    for name in ("left_only", "right_only", "overlap", "silence"):
-        item = activity[name]
-        print(f"  {name:12} {item['duration_sec']:7.2f} s  {item['percentage']:5.1f}%")
-    print("\nConversation dynamics")
-    print(f"  Turn exchanges/min: {_format(turns['turn_exchanges_per_min'])}")
-    print(f"  Simultaneous speech: {activity['overlap']['percentage']:.1f}%")
-    print(f"  Overlap transitions: {_format_pct(turns['overlapping_transition_rate'])}")
-    print(f"  VAD-based backchannels/min: {_format(turns['backchannels_per_min'])}")
-    print("\nOptional reference-free models")
-    for name, value in report["acoustic_quality"].items():
-        print(f"  {name.upper():8} {_status(value['left'])}")
-    print(f"  ITC       {_status(report['speaker_identity']['itc']['left'])}")
+    print(f"Input: {report['input']['path']}\nDuration: {report['input']['duration_sec']:.2f} s | Sample rate: {report['input']['sample_rate']} Hz | Channels: 2")
+    print("\n" + render_tables(summarize_reports([report])))
     print(f"\nBenchmark complete\nJSON report: {report_path}")
 
 
@@ -113,6 +140,16 @@ def _format_pct(value: float | None) -> str:
 
 def _write_json(path: Path, data: dict | list) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_csv(path: Path, rows: list[dict]) -> None:
+    import csv
+
+    fieldnames = sorted({key for row in rows for key in row}) or ["source", "status", "error"]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _sha256(path: Path) -> str:

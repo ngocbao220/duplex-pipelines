@@ -33,25 +33,18 @@ def cholimex(source, output, config):
 
 def duplexchat(source, output, config):
     from duplexchat.runner import run_single_audio
-    from duplexchat.devices import resolve_device
     config = dict(config)
     debug = bool(config.pop('debug', False))
-    split_conversation = bool(config.pop('split_conversation', False))
     phase_dir = output / 'phases'
-    result = run_single_audio(str(source), output_prefix=str(output / 'speaker'),
-                              output_dir=str(phase_dir), analyze_diarization=debug,
-                              split_conversation=split_conversation, **config)
+    result = run_single_audio(str(source), output_prefix=str(output / 'collection'),
+                              output_dir=str(phase_dir), **config)
     if debug:
         import shutil
         shutil.move(str(phase_dir), str(output / 'debug'))
     else:
         import shutil
         shutil.rmtree(phase_dir)
-    return output / 'audio.stereo.wav', {
-        'device': resolve_device(config.get('runtime_device', 'auto')),
-        'execution_mode': 'split_conversation' if split_conversation else 'full_stereo',
-        'diarization_debug': debug,
-    }
+    return None, {'collection': str(result['collection']), 'devices': result['devices']}
 
 
 def vilier(source, output, config):

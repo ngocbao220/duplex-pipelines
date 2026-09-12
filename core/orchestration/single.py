@@ -10,18 +10,16 @@ from .runner import ROOT, code_identity, launch_pipeline, pipeline_config
 from .contract import write_json
 
 
-def run_single(name: str, source: Path, output: Path, debug: bool, split_conversation: bool,
-               separate_chunk: float,
+def run_single(name: str, source: Path, output: Path, debug: bool, separate_chunk: float,
+               device_ids: list[int] | None,
                gt_a: Path | None, gt_b: Path | None) -> int:
     """Run one adapter without ever passing reference audio to its worker."""
     from core.config import load_config
-    from core import benchmark
 
     if bool(gt_a) != bool(gt_b):
         raise ValueError("--gt-speaker-a and --gt-speaker-b must be provided together")
     cfg = load_config(ROOT / "configs/config.json")
-    args = SimpleNamespace(debug=debug, split_conversation=split_conversation,
-                           separate_chunk=separate_chunk,
+    args = SimpleNamespace(debug=debug, separate_chunk=separate_chunk, device_ids=device_ids,
                            vilier_config=ROOT / "configs/vilier.json",
                            duplexchat_config=ROOT / "configs/duplexchat.json", sample_rate=16000)
     run_dir = output.parent / ".runs" / uuid.uuid4().hex
@@ -37,6 +35,15 @@ def run_single(name: str, source: Path, output: Path, debug: bool, split_convers
               f"-> run.json: {output / 'run.json'}\n"
               f"-> worker log: {run_dir / name / 'worker.log'}", flush=True)
         return exit_code or 1
+    if name == "duplexchat":
+        from core.stereo_benchmark.collection import run_collection_benchmark
+        report = run_collection_benchmark(output / "conversations" / "manifest.json", output)
+        manifest = json.loads((output / "run.json").read_text())
+        manifest["benchmark"] = {"mode": "reference_free", "report": str(report)}
+        write_json(output / "run.json", manifest)
+        print(f"Done\n-> conversations: {output / 'conversations'}\n-> benchmark.json: {report}\n-> run.json: {output / 'run.json'}", flush=True)
+        return exit_code
+    from core import benchmark
     report = output / "benchmark.json"
     if gt_a and gt_b:
         score = benchmark.score_reference_sample({"key": output.name, "gt_speaker_1": str(gt_a), "gt_speaker_2": str(gt_b)}, output.parent, 16000, -40.0, -20.0)

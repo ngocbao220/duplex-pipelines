@@ -43,8 +43,8 @@ def pipeline_config(name, args, cfg):
         config.setdefault('entrypoint', {})['sample_rate'] = args.sample_rate
     config['debug'] = bool(args.debug)
     if name == 'duplexchat':
-        config['split_conversation'] = bool(getattr(args, 'split_conversation', False))
-        config['separate_chunk'] = float(getattr(args, 'separate_chunk', config.get('separate_chunk', 90.0)))
+        config['separate_chunk'] = float(getattr(args, 'separate_chunk', config.get('separate_chunk', 120.0)))
+        config['device_ids'] = getattr(args, 'device_ids', None)
     return config
 
 
@@ -66,7 +66,6 @@ def launch_pipeline(name, request, run_dir):
         print(f'[{name}] Cannot start worker: {exc}', flush=True)
         write_json(run_dir / name / 'launch_error.json', {'error': str(exc)})
         return 1
-
 
 
 

@@ -15,7 +15,7 @@ def _segment(speaker: str, start: float, end: float) -> dict:
     return {"speaker": speaker, "start": start, "end": end}
 
 
-def test_split_runner_separates_each_dialogue_with_one_model_load(monkeypatch, tmp_path):
+def test_runner_exports_only_conversation_stereo_artifacts(monkeypatch, tmp_path):
     output_root = tmp_path / "output"
     phase_dir = output_root / "phases"
     source_wav = tmp_path / "source.wav"
@@ -61,12 +61,12 @@ def test_split_runner_separates_each_dialogue_with_one_model_load(monkeypatch, t
         output_prefix=str(output_root / "speaker"),
         output_dir=str(phase_dir),
         runtime_device="cpu",
-        split_conversation=True,
     )
 
     manifest = json.loads((output_root / "conversations" / "manifest.json").read_text())
     assert calls == {"diarize": 1, "load": 1, "separate": 2}
-    assert result["stereo"] == output_root / "audio.stereo.wav"
+    assert result["collection"] == output_root / "conversations" / "manifest.json"
+    assert not (output_root / "audio.stereo.wav").exists()
     assert manifest["sample_rate"] == 24_000
     assert len(manifest["conversations"]) == 2
     assert all(

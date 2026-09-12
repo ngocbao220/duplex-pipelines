@@ -1,10 +1,9 @@
 {
-  "diarize_chunk": 90.0,
-  "separate_chunk": 90.0,
+  "diarize_chunk": null,
+  "separate_chunk": 120.0,
   "diarization_backend": "auto",
   "diarization_model": "pyannote/speaker-diarization-community-1",
-  "separation_backend": "dialoguesidon",
-  "separation_model": null,
+  "device_ids": null,
   "runtime_device": "auto",
   "num_steps": 30
 }

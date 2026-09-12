@@ -6,6 +6,9 @@ from core.stereo_benchmark.activity import activity_summary
 from core.stereo_benchmark.audio import load_stereo
 from core.stereo_benchmark.dynamics import analyze_turns, cosine_distinctiveness
 from core.stereo_benchmark.models import acoustic_metrics
+from core.stereo_benchmark.dnsmos import DNSMOSScorer
+from core.stereo_benchmark.report import render_tables, summarize_reports
+from core.stereo_benchmark.runner import discover_corpus_audio
 
 
 def test_load_stereo_rejects_mono(tmp_path):
@@ -74,3 +77,39 @@ def test_optional_model_failure_is_reported_without_crashing(monkeypatch):
 
     assert result["squim"]["left"]["status"] == "unavailable"
     assert "model unavailable" in result["squim"]["left"]["reason"]
+
+
+def test_dnsmos_reports_missing_model_assets_without_crashing(tmp_path):
+    result = DNSMOSScorer(tmp_path).score(np.zeros(16000), 16000)
+
+    assert result["status"] == "unavailable"
+    assert "sig_bak_ovr.onnx" in result["reason"]
+
+
+def test_corpus_discovery_recurses_over_supported_audio_files(tmp_path):
+    _stereo = tmp_path / "nested" / "audio.stereo.wav"
+    _stereo.parent.mkdir()
+    sf.write(_stereo, np.zeros((160, 2)), 16000)
+    (tmp_path / "notes.txt").write_text("not audio")
+
+    assert discover_corpus_audio(tmp_path) == [_stereo]
+
+
+def test_summary_and_markdown_tables_include_requested_metrics():
+    report = {
+        "input": {"path": "/tmp/sample.wav", "duration_sec": 60.0},
+        "acoustic_quality": {"dnsmos": {"left": {"status": "ok", "ovrl": 3.0}, "right": {"status": "ok", "ovrl": 4.0}, "mean": {"ovrl": 3.5}}, "squim": {"left": {"status": "ok", "sq_stoi": 0.9, "sq_pesq": 3.1}, "right": {"status": "ok", "sq_stoi": 0.8, "sq_pesq": 2.9}, "mean": {"sq_stoi": 0.85, "sq_pesq": 3.0}}},
+        "speaker_identity": {"itc": {"left": {"status": "ok", "itc": 0.7}, "right": {"status": "ok", "itc": 0.8}, "mean": {"status": "ok", "itc": 0.75}}, "itd": {"status": "ok", "itd": 0.2}},
+        "speech_activity": {"overlap": {"percentage": 10.0}},
+        "turn_taking": {"turn_exchanges_per_min": 5.0, "mean_turn_duration_sec": 2.0, "mean_left_turn_duration_sec": 2.1, "mean_right_turn_duration_sec": 1.9, "overlapping_transition_rate": 0.25, "backchannels_per_min": 1.0},
+    }
+
+    summary = summarize_reports([report])
+    rendered = render_tables(summary)
+
+    assert summary["sample_count"] == 1
+    assert "DNSMOS" in rendered
+    assert "SQ-STOI" in rendered
+    assert "Turn Exchange" in rendered
+    assert "Overlap Transition" in rendered
+    assert "Meaning" in rendered

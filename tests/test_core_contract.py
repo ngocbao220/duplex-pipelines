@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from core.orchestration.contract import run_sample, validate_stereo
+from core.orchestration.contract import run_sample, validate_conversation_collection, validate_stereo
 from core.orchestration import worker
 from core.orchestration.process import stream_process
 
@@ -36,29 +36,32 @@ def test_core_contract_requires_one_timeline_aligned_stereo_output(tmp_path):
         raise AssertionError("short track must fail validation")
 
 
-def test_duplexchat_worker_always_returns_full_stereo_and_uses_debug_only_for_diarization(monkeypatch, tmp_path):
+def test_duplexchat_collection_contract_allows_zero_conversations(tmp_path):
+    manifest = tmp_path / "conversations" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text('{"conversation_count": 0, "conversations": []}')
+
+    assert validate_conversation_collection(manifest) == 0
+
+
+def test_duplexchat_worker_returns_a_conversation_collection(monkeypatch, tmp_path):
     captured = {}
     runner_module = types.ModuleType("duplexchat.runner")
 
     def run_single_audio(*_args, **kwargs):
         captured.update(kwargs)
         Path(kwargs["output_dir"]).mkdir(parents=True)
-        return {"stereo": tmp_path / "output" / "audio.stereo.wav", "segments": []}
+        return {"collection": tmp_path / "output" / "conversations" / "manifest.json", "devices": ["cpu"]}
 
     runner_module.run_single_audio = run_single_audio
-    devices_module = types.ModuleType("duplexchat.devices")
-    devices_module.resolve_device = lambda *_args, **_kwargs: "cpu"
     package = types.ModuleType("duplexchat")
     package.__path__ = []
     monkeypatch.setitem(sys.modules, "duplexchat", package)
     monkeypatch.setitem(sys.modules, "duplexchat.runner", runner_module)
-    monkeypatch.setitem(sys.modules, "duplexchat.devices", devices_module)
+    collection, metadata = worker.duplexchat(tmp_path / "input.wav", tmp_path / "output", {"debug": True})
 
-    stereo, metadata = worker.duplexchat(tmp_path / "input.wav", tmp_path / "output", {"debug": True})
-
-    assert stereo == tmp_path / "output" / "audio.stereo.wav"
-    assert metadata == {"device": "cpu", "execution_mode": "full_stereo", "diarization_debug": True}
-    assert captured["analyze_diarization"] is True
+    assert collection is None
+    assert metadata == {"collection": str(tmp_path / "output" / "conversations" / "manifest.json"), "devices": ["cpu"]}
 
 
 def test_failed_sample_emits_one_concise_console_error_and_persists_traceback(tmp_path, capsys):

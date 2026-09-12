@@ -31,6 +31,7 @@ reports/
 *.ckpt
 *.pth
 *.pt
+models/
 
 .DS_Store
 

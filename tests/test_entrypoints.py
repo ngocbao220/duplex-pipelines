@@ -16,14 +16,11 @@ def test_each_pipeline_cli_exposes_single_command():
         assert single_args.command == "single"
 
 
-def test_duplexchat_cli_exposes_split_conversation_flag():
+def test_duplexchat_cli_uses_conversation_mode_by_default():
     parser = build_pipeline_parser("duplexchat")
 
-    args = parser.parse_args([
-        "single", "--input", "mixture.wav", "--output-dir", "out", "--split_conversation",
-    ])
-
-    assert args.split_conversation is True
+    args = parser.parse_args(["single", "--input", "mixture.wav", "--output-dir", "out"])
+    assert args.separate_chunk == 120.0
 
 
 def test_duplexchat_cli_exposes_separate_chunk():
@@ -35,6 +32,20 @@ def test_duplexchat_cli_exposes_separate_chunk():
     ])
 
     assert args.separate_chunk == 30.0
+
+
+def test_duplexchat_cli_accepts_explicit_gpu_ids():
+    args = build_pipeline_parser("duplexchat").parse_args([
+        "single", "--input", "mixture.wav", "--output-dir", "out", "--device-ids", "0", "1",
+    ])
+    assert args.device_ids == [0, 1]
+
+
+def test_duplexchat_cli_does_not_accept_ground_truth_flags():
+    with pytest.raises(SystemExit):
+        build_pipeline_parser("duplexchat").parse_args([
+            "single", "--input", "mixture.wav", "--output-dir", "out", "--gt-speaker-a", "a.wav",
+        ])
 
 
 def test_duplexchat_cli_rejects_removed_conversation_scale_option():

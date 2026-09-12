@@ -329,7 +329,7 @@ def _load_encoder_classifier():
 def run_diarization(
     pipeline: "Pipeline | FileDiarizationAdapter",
     wav_path: Path,
-    max_chunk_dur: float = 60.0,
+    max_chunk_dur: float | None = None,
     progress_callback: Callable[[str, int], None] | None = None,
     diagnostics: dict | None = None,
 ) -> list[dict]:
@@ -349,6 +349,17 @@ def run_diarization(
         return segments
 
     waveform, source_sample_rate = load_wav_tensor(wav_path)
+    if max_chunk_dur is None:
+        if progress_callback is not None:
+            progress_callback("start", 1)
+        output = pipeline({"waveform": waveform, "sample_rate": source_sample_rate})
+        segments = _segments_from_annotation(output)
+        if diagnostics is not None:
+            diagnostics.update({"method": "whole_episode", "global_speakers": len({s["speaker"] for s in segments})})
+        if progress_callback is not None:
+            progress_callback("advance", 1)
+            progress_callback("close", 0)
+        return segments
     sample_rate = DIARIZATION_SAMPLE_RATE
     if source_sample_rate != sample_rate:
         target_length = max(1, round(waveform.shape[-1] * sample_rate / source_sample_rate))

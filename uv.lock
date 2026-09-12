@@ -970,6 +970,7 @@ dependencies = [
 
 [package.optional-dependencies]
 benchmark = [
+    { name = "librosa" },
     { name = "onnxruntime" },
     { name = "speechbrain" },
 ]
@@ -1005,6 +1006,7 @@ requires-dist = [
     { name = "diffusers", marker = "extra == 'separation-dialoguesidon'" },
     { name = "huggingface-hub" },
     { name = "huggingface-hub", marker = "extra == 'separation-dialoguesidon'" },
+    { name = "librosa", marker = "extra == 'benchmark'", specifier = ">=0.10" },
     { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'diarization-sortformer'" },
     { name = "onnxruntime", marker = "extra == 'benchmark'" },
     { name = "packaging", marker = "extra == 'diarization-sortformer'" },

@@ -31,6 +31,29 @@ def fingerprint(pipeline: str, source: Path, config: dict, code: str) -> str:
 STEREO_FILENAME = "audio.stereo.wav"
 
 
+def collection_sha256(manifest: Path) -> str:
+    payload = bytearray(manifest.read_bytes())
+    for row in json.loads(manifest.read_text())["conversations"]:
+        payload.extend(sha256(Path(row["stereo"])).encode())
+    return hashlib.sha256(payload).hexdigest()
+
+
+def validate_conversation_collection(manifest: Path) -> int:
+    data = json.loads(manifest.read_text())
+    rows = data["conversations"]
+    if data.get("conversation_count") != len(rows):
+        raise ValueError("conversation_count does not match manifest")
+    for row in rows:
+        stereo = Path(row["stereo"])
+        info = __import__("soundfile").info(stereo)
+        if info.channels != 2 or info.samplerate != 24_000 or info.frames <= 0:
+            raise ValueError(f"Invalid 24 kHz stereo conversation: {stereo}")
+        metadata = json.loads((stereo.parent / "metadata.json").read_text())
+        if metadata.get("conversation_idx") != row.get("conversation_idx"):
+            raise ValueError(f"Conversation metadata does not match manifest: {stereo}")
+    return len(rows)
+
+
 def validate_stereo(source: Path, stereo: Path) -> float:
     import numpy as np
     import soundfile as sf
@@ -50,7 +73,12 @@ def validate_stereo(source: Path, stereo: Path) -> float:
     return duration
 
 
-def validate_output(source: Path, stereo: Path | None, metadata: dict) -> float:
+def validate_output(pipeline: str, source: Path, stereo: Path | None, metadata: dict) -> float:
+    if pipeline == "duplexchat":
+        validate_conversation_collection(Path(metadata["collection"]))
+        import soundfile as sf
+        info = sf.info(source)
+        return info.frames / info.samplerate
     if stereo is None:
         raise ValueError("Full-input output requires a stereo WAV")
     return validate_stereo(source, stereo)
@@ -63,15 +91,21 @@ def vilier_tracks(manifest: Path) -> list[Path]:
     return [manifest.parent / speaker['track_wav'] for speaker in speakers]
 
 
-def reusable(output: Path, identity: str, source: Path) -> dict | None:
+def reusable(pipeline: str, output: Path, identity: str, source: Path) -> dict | None:
     try:
         result = json.loads((output / 'run.json').read_text())
         if result['status'] != 'complete' or result['fingerprint'] != identity:
             return None
-        stereo = output / STEREO_FILENAME
-        validate_stereo(source, stereo)
-        if result['audio_sha256'] != sha256(stereo):
-            return None
+        if pipeline == "duplexchat":
+            manifest = output / "conversations" / "manifest.json"
+            validate_conversation_collection(manifest)
+            if result["collection_sha256"] != collection_sha256(manifest):
+                return None
+        else:
+            stereo = output / STEREO_FILENAME
+            validate_stereo(source, stereo)
+            if result['audio_sha256'] != sha256(stereo):
+                return None
         return result
     except (OSError, ValueError, KeyError, RuntimeError):
         return None
@@ -85,7 +119,7 @@ def run_sample(pipeline, sample, output, config, code, adapter, force=False) -> 
               'input': str(source), 'status': 'running', 'resumed': False}
     try:
         identity = fingerprint(pipeline, source, config, code)
-        previous = reusable(output, identity, source) if not force else None
+        previous = reusable(pipeline, output, identity, source) if not force else None
         if previous:
             return {**previous, 'resumed': True}
         if output.exists():
@@ -96,14 +130,17 @@ def run_sample(pipeline, sample, output, config, code, adapter, force=False) -> 
         result['fingerprint'] = identity
         write_json(output / 'run.json', result)
         stereo, metadata = adapter(source, output, config)
-        duration = validate_output(source, stereo, metadata)
-        canonical = output / STEREO_FILENAME
-        if stereo.resolve() != canonical.resolve():
-            shutil.copy2(stereo, canonical)
+        duration = validate_output(pipeline, source, stereo, metadata)
         elapsed = time.perf_counter() - started
         result.update(status='complete', duration_sec=duration, inference_seconds=elapsed,
-                      rtf=elapsed / duration, metadata=metadata,
-                      audio_sha256=sha256(canonical))
+                      rtf=elapsed / duration, metadata=metadata)
+        if pipeline == "duplexchat":
+            result["collection_sha256"] = collection_sha256(Path(metadata["collection"]))
+        else:
+            canonical = output / STEREO_FILENAME
+            if stereo.resolve() != canonical.resolve():
+                shutil.copy2(stereo, canonical)
+            result["audio_sha256"] = sha256(canonical)
     except Exception as exc:
         trace = traceback.format_exc()
         result.update(status='failed', error=f'{type(exc).__name__}: {exc}',
