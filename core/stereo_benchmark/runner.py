@@ -85,11 +85,21 @@ def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debu
 
 
 def discover_corpus_audio(corpus_dir: Path) -> list[Path]:
-    """Recursively find audio candidates; per-file validation decides stereo eligibility."""
+    """Recursively find audio candidates; only stereo files are eligible."""
     root = Path(corpus_dir)
     if not root.is_dir():
         raise NotADirectoryError(f"Corpus directory does not exist: {root}")
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in SUPPORTED_AUDIO_SUFFIXES)
+    
+    candidates = []
+    for path in root.rglob("*"):
+        if path.is_file() and path.suffix.lower() in SUPPORTED_AUDIO_SUFFIXES:
+            try:
+                import soundfile as sf
+                if sf.info(path).channels == 2:
+                    candidates.append(path)
+            except Exception:
+                pass
+    return sorted(candidates)
 
 
 def run_corpus_benchmark(corpus_dir: Path, output_dir: Path, device: str = "auto", debug: bool = False, dnsmos_model_dir: Path | None = Path("models/dnsmos")) -> tuple[dict, Path]:
