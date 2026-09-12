@@ -60,11 +60,26 @@ def _squim(audio: np.ndarray, sample_rate: int, device: str) -> dict:
         waveform = torch.from_numpy(audio).unsqueeze(0)
         if sample_rate != 16000:
             waveform = ta_functional.resample(waveform, sample_rate, 16000)
-        with torch.inference_mode():
-            stoi, pesq, si_sdr = _squim_model(device)(waveform.to(device))
+        
+        chunk_size = 16000 * 10
+        stois, pesqs, si_sdrs = [], [], []
+        model = _squim_model(device)
+        for start in range(0, waveform.shape[1], chunk_size):
+            chunk = waveform[:, start:start + chunk_size]
+            if chunk.shape[1] < 16000 * 1:
+                continue
+            with torch.inference_mode():
+                stoi, pesq, si_sdr = model(chunk.to(device))
+                stois.append(float(stoi.item()))
+                pesqs.append(float(pesq.item()))
+                si_sdrs.append(float(si_sdr.item()))
+        
+        if not stois:
+            return unavailable("Audio too short for SQUIM")
+        
         return {
-            "status": "ok", "sq_stoi": float(stoi.item()), "sq_pesq": float(pesq.item()),
-            "sq_si_sdr": float(si_sdr.item()),
+            "status": "ok", "sq_stoi": sum(stois)/len(stois), "sq_pesq": sum(pesqs)/len(pesqs),
+            "sq_si_sdr": sum(si_sdrs)/len(si_sdrs),
         }
     except Exception as error:  # optional model may require an unavailable download/runtime
         return unavailable(f"SQUIM unavailable: {type(error).__name__}: {error}")
