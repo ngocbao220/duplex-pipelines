@@ -67,20 +67,30 @@ def _device_label(device: str) -> str:
     return device
 
 
+def _compact_path(value, width: int = 46) -> str:
+    text = str(value)
+    if len(text) <= width:
+        return text
+    return "..." + text[-(width - 3):]
+
+
 def _log_run_summary(logger, audio_path, normalized, output_root, phase_dir, manifest, devices, conversations, segment_count, phase_times):
+    input_width = 34
+    output_width = 30
+    saved_width = 48
     logger.info("Runtime devices: diarization=%s; separation=%s", _device_label(devices[0]), [_device_label(device) for device in devices])
     logger.info("Detected conversations: %d", conversations)
     logger.info("Run summary")
-    logger.info("  %-22s | %-24s | %-24s | %-44s | %8s", "Phase", "Input", "Output", "Saved at", "Time")
-    logger.info("  %s", "-" * 132)
+    logger.info("  %-22s | %-34s | %-30s | %-48s | %8s", "Phase", "Input", "Output", "Saved at", "Time")
+    logger.info("  %s", "-" * 152)
     rows = [
-        ("Preprocess", audio_path, "mono 16 kHz", normalized, phase_times.get("preprocess", 0.0)),
-        ("Speaker diarization", normalized.name, f"{segment_count} segments", phase_dir / "phase_02_diarization", phase_times.get("diarization", 0.0)),
-        ("Dialogue separation", f"{conversations} conversations", f"{conversations} stereo 24 kHz WAV", manifest, phase_times.get("separation")),
+        ("Preprocess", _compact_path(audio_path, input_width), "mono 16 kHz", _compact_path(normalized, saved_width), phase_times.get("preprocess", 0.0)),
+        ("Speaker diarization", _compact_path(normalized.name, input_width), f"{segment_count} segments", _compact_path(phase_dir / "phase_02_diarization", saved_width), phase_times.get("diarization", 0.0)),
+        ("Dialogue separation", f"{conversations} conversations", f"{conversations} stereo 24 kHz WAV", _compact_path(manifest, saved_width), phase_times.get("separation")),
     ]
     for phase, input_name, output, saved_at, elapsed in rows:
         duration = "SKIPPED" if elapsed is None else f"{elapsed:.2f}s"
-        logger.info("  %-22s | %-24s | %-24s | %-44s | %8s", phase, input_name, output, saved_at, duration)
+        logger.info("  %-22s | %-34s | %-30s | %-48s | %8s", phase, input_name, output, saved_at, duration)
     logger.info("  Output root: %s", output_root)
 
 

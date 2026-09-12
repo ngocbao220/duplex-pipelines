@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "duplexchat" / "src"))
 
-from duplexchat.runner import _log_run_summary  # noqa: E402
+from duplexchat.runner import _compact_path, _log_run_summary  # noqa: E402
 
 
 class _CaptureLogger:
@@ -38,3 +38,13 @@ def test_run_summary_lists_devices_conversations_and_phase_details(tmp_path):
     assert "Preprocess" in output and "mono 16 kHz" in output and "0.25s" in output
     assert "Speaker diarization" in output and "96 segments" in output and "21.50s" in output
     assert "Dialogue separation" in output and "3 stereo 24 kHz WAV" in output and "151.50s" in output
+
+
+def test_summary_compacts_long_paths_without_losing_the_filename():
+    path = "/kaggle/input/datasets/ngocbaotrinhtuan/inputs/easy_1.wav"
+
+    compacted = _compact_path(path, width=24)
+
+    assert len(compacted) == 24
+    assert compacted.startswith("...")
+    assert compacted.endswith("easy_1.wav")
