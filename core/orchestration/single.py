@@ -11,7 +11,6 @@ from .contract import write_json
 
 
 def run_single(name: str, source: Path, output: Path, debug: bool, separate_chunk: float,
-               diarize_chunk: float | None,
                device_ids: list[int] | None,
                gt_a: Path | None, gt_b: Path | None) -> int:
     """Run one adapter without ever passing reference audio to its worker."""
@@ -20,7 +19,7 @@ def run_single(name: str, source: Path, output: Path, debug: bool, separate_chun
     if bool(gt_a) != bool(gt_b):
         raise ValueError("--gt-speaker-a and --gt-speaker-b must be provided together")
     cfg = load_config(ROOT / "configs/config.json")
-    args = SimpleNamespace(debug=debug, separate_chunk=separate_chunk, diarize_chunk=diarize_chunk, device_ids=device_ids,
+    args = SimpleNamespace(debug=debug, separate_chunk=separate_chunk, device_ids=device_ids,
                            vilier_config=ROOT / "configs/vilier.json",
                            duplexchat_config=ROOT / "configs/duplexchat.json", sample_rate=16000)
     run_dir = output.parent / ".runs" / uuid.uuid4().hex

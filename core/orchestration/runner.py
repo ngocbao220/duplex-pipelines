@@ -44,8 +44,6 @@ def pipeline_config(name, args, cfg):
     config['debug'] = bool(args.debug)
     if name == 'duplexchat':
         config['separate_chunk'] = float(getattr(args, 'separate_chunk', config.get('separate_chunk', 120.0)))
-        if getattr(args, 'diarize_chunk', None) is not None:
-            config['diarize_chunk'] = float(args.diarize_chunk)
         config['device_ids'] = getattr(args, 'device_ids', None)
     return config
 
