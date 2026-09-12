@@ -97,14 +97,22 @@ def _log_run_summary(logger, audio_path, normalized, output_root, phase_dir, man
 def _separate_dialogues(waveform, sample_rate, dialogues, devices, num_steps, chunk_seconds):
     models = {device: load_separation_models(device=device) for device in devices}
 
+    import queue
+    device_queue = queue.Queue()
+    for d in devices:
+        device_queue.put(d)
+
     def run(pair):
         index, dialogue = pair
         start = max(0, min(waveform.shape[-1], round(dialogue.start * sample_rate)))
         end = max(start, min(waveform.shape[-1], round(dialogue.end * sample_rate)))
         crop = waveform[..., start:end].clone()
-        device = devices[index % len(devices)]
-        first, second, output_rate = separate_waveform(crop, sample_rate, models[device], num_steps, chunk_seconds, _no_progress)
-        return index, dialogue, crop, first, second, output_rate
+        device = device_queue.get()
+        try:
+            first, second, output_rate = separate_waveform(crop, sample_rate, models[device], num_steps, chunk_seconds, _no_progress)
+            return index, dialogue, crop, first, second, output_rate
+        finally:
+            device_queue.put(device)
 
     try:
         with ThreadPoolExecutor(max_workers=len(devices)) as pool:
