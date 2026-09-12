@@ -130,9 +130,12 @@ def run_corpus_benchmark(corpus_dir: Path, output_dir: Path, device: str = "auto
 
 
 def print_summary(report: dict, report_path: Path) -> None:
+    from .report import render_warnings
     print("Pipeline: Stereo Full-Duplex Benchmark\n")
     print(f"Input: {report['input']['path']}\nDuration: {report['input']['duration_sec']:.2f} s | Sample rate: {report['input']['sample_rate']} Hz | Channels: 2")
     print("\n" + render_tables(summarize_reports([report])))
+    if warnings := render_warnings([report]):
+        print(warnings)
     print(f"\nBenchmark complete\nJSON report: {report_path}")
 
 

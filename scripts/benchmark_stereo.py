@@ -25,6 +25,17 @@ def main() -> None:
         report, report_path = run_corpus_benchmark(args.corpus, args.output_dir, args.device, args.debug, args.dnsmos_model_dir)
         print("Pipeline: Stereo Full-Duplex Corpus Benchmark\n")
         print(render_tables(report["summary"]))
+        
+        # Collect and print warnings from the first successfully processed sample
+        from core.stereo_benchmark.report import render_warnings
+        try:
+            import json
+            first_report_path = next(Path(args.output_dir).resolve().joinpath(s["report"]) for s in report["samples"] if s["status"] == "ok")
+            if warnings := render_warnings([json.loads(first_report_path.read_text())]):
+                print(warnings)
+        except StopIteration:
+            pass
+            
         print(f"\nCandidates: {report['candidate_count']} | Successful: {report['summary']['sample_count']}\nJSON report: {report_path}")
 
 

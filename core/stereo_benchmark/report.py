@@ -45,6 +45,31 @@ def render_tables(summary: dict) -> str:
     return f"Samples scored: {summary['sample_count']}\n\n{_table(formatted)}"
 
 
+def render_warnings(reports: list[dict]) -> str:
+    if not reports:
+        return ""
+    report = reports[0]
+    warnings = []
+    
+    def check(path_tuple, name):
+        data = report
+        for key in path_tuple:
+            if not isinstance(data, dict):
+                return
+            data = data.get(key)
+        if isinstance(data, dict) and data.get("status") == "unavailable":
+            reason = data.get("reason", "Unknown reason")
+            warnings.append(f"- {name} skipped: {reason}")
+
+    check(("acoustic_quality", "dnsmos", "left"), "DNSMOS")
+    check(("acoustic_quality", "squim", "left"), "SQUIM")
+    check(("speaker_identity", "itc", "left"), "Speaker Identity (ITC/ITD)")
+
+    if warnings:
+        return "\nWarnings:\n" + "\n".join(warnings) + "\n"
+    return ""
+
+
 def flatten_report(report: dict, source: str) -> dict:
     return {"source": source, "status": "ok", "duration_sec": _at(report, "input", "duration_sec"), **summarize_reports([report])["metrics"]}
 
