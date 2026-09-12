@@ -267,6 +267,35 @@ def _maybe_swap(
     return curr_chunk, False
 
 
+def _blend_overlap(
+    stitched: torch.Tensor, pred: torch.Tensor, overlap_samples: int
+) -> torch.Tensor:
+    """Align and crossfade two chunks using only samples present in both."""
+    effective_overlap = min(
+        overlap_samples,
+        stitched.shape[-1],
+        pred.shape[-1],
+    )
+    if effective_overlap <= 0:
+        return torch.cat([stitched, pred], dim=-1)
+
+    previous = stitched[:, -effective_overlap:]
+    pred, _ = _maybe_swap(previous, pred, effective_overlap)
+    current = pred[:, :effective_overlap]
+    fade = torch.linspace(
+        0.0,
+        1.0,
+        effective_overlap,
+        device=stitched.device,
+        dtype=stitched.dtype,
+    ).unsqueeze(0)
+    blended = previous * (1 - fade) + current * fade
+    return torch.cat(
+        [stitched[:, :-effective_overlap], blended, pred[:, effective_overlap:]],
+        dim=-1,
+    )
+
+
 @torch.inference_mode()
 def _separate_chunk(wav: torch.Tensor, num_steps: int, models: dict) -> torch.Tensor:
     """Separate a single chunk. Input: (1, T) at 16 kHz. Output: (2, T_out) at model sr."""
@@ -390,12 +419,7 @@ def run_separation(
                 pred.shape[-1],
             ))
             if overlap_out > 0:
-                pred, _ = _maybe_swap(stitched[:, -overlap_out:], pred, overlap_out)
-                fade = torch.linspace(0.0, 1.0, overlap_out).unsqueeze(0)
-                blended = stitched[:, -overlap_out:] * (1 - fade) + pred[:, :overlap_out] * fade
-                stitched = torch.cat(
-                    [stitched[:, :-overlap_out], blended, pred[:, overlap_out:]], dim=-1
-                )
+                stitched = _blend_overlap(stitched, pred, overlap_out)
             else:
                 stitched = torch.cat([stitched, pred], dim=-1)
             prev_end_in = end

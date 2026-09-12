@@ -10,6 +10,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "duple
 from duplexchat import preprocess, separation_backend  # noqa: E402
 
 
+def test_blend_overlap_clamps_mismatched_chunk_lengths():
+    stitched = torch.zeros(2, 3_000)
+    pred = torch.ones(2, 383)
+
+    blended = separation_backend._blend_overlap(stitched, pred, 3_000)
+
+    assert blended.shape == (2, 3_000)
+
+
 def test_maybe_swap_clamps_mismatched_overlap_lengths():
     previous = torch.zeros(2, 3_000)
     current = torch.zeros(2, 383)
