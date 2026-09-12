@@ -108,7 +108,8 @@ def run_corpus_benchmark(corpus_dir: Path, output_dir: Path, device: str = "auto
     candidates = discover_corpus_audio(corpus_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     reports, samples, rows = [], [], []
-    for index, audio_path in enumerate(candidates):
+    import tqdm
+    for index, audio_path in enumerate(tqdm.tqdm(candidates, desc="Benchmarking files")):
         source = str(audio_path.relative_to(corpus_dir))
         file_dir = output_dir / "files" / f"{index:06d}"
         try:
