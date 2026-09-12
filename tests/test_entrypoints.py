@@ -23,7 +23,18 @@ def test_duplexchat_cli_uses_conversation_mode_by_default():
     assert args.separate_chunk == 120.0
 
 
-def test_duplexchat_cli_exposes_separate_chunk():
+def test_duplexchat_cli_exposes_separation_chunk():
+    parser = build_pipeline_parser("duplexchat")
+
+    args = parser.parse_args([
+        "single", "--input", "mixture.wav", "--output-dir", "out",
+        "--separation-chunk", "30",
+    ])
+
+    assert args.separate_chunk == 30.0
+
+
+def test_duplexchat_cli_keeps_separate_chunk_alias():
     parser = build_pipeline_parser("duplexchat")
 
     args = parser.parse_args([

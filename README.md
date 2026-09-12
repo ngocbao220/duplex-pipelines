@@ -48,23 +48,59 @@ uv run --project pipeline/cholimex python -m cholimex single \
   --input mixture.wav --output-dir outputs/cholimex --debug
 
 uv run --project pipeline/duplexchat python -m duplexchat single \
-  --input mixture.wav --output-dir outputs/duplexchat --debug
+  --input mixture.wav --output-dir outputs/duplexchat \
+  --separation-chunk 60 --debug
 
 uv run --project pipeline/sommelier python -m sommelier single \
   --input mixture.wav --output-dir outputs/sommelier --debug
 ```
 
-`audio.stereo.wav`, `run.json`, và `benchmark.json` nằm trong `--output-dir`.
-Hai nguồn tách nằm lần lượt ở kênh 0 và 1; tên file không gán danh tính speaker.
+Vilier, Cholimex và Sommelier ghi `audio.stereo.wav`, `run.json`, và
+`benchmark.json` ngay trong `--output-dir`. Hai nguồn tách nằm lần lượt ở kênh
+0 và 1; tên file không gán danh tính speaker.
+
+DuplexChat mặc định diarize toàn episode, tự lấy các đoạn hội thoại hợp lệ có
+đúng hai speaker, rồi tách từng đoạn. `--separation-chunk` mặc định là `120`
+giây (overlap nội bộ là 10 giây). Kết quả là một collection, không phải một
+WAV stereo cho toàn episode:
+
+```text
+outputs/duplexchat/
+├── conversations/
+│   ├── manifest.json
+│   ├── conversation_00000/
+│   │   ├── audio.stereo.wav
+│   │   ├── mixture.wav
+│   │   ├── metadata.json
+│   │   └── benchmark/{report.json,timeline.json}
+│   └── ...
+├── benchmark.json
+└── run.json
+```
+
+Mỗi `conversation_*/audio.stereo.wav` là WAV stereo 24 kHz, timeline-aligned
+với `mixture.wav`. Không tìm được dialogue hợp lệ vẫn là một run thành công với
+`conversation_count: 0` trong manifest. Với `--debug`, DuplexChat ghi raw
+diarization/linking artifacts trong `debug/phase_02_diarization/`.
+
+Để phân phối các dialogue độc lập qua nhiều GPU, chỉ định danh sách GPU. GPU
+đầu tiên chạy diarization; các task separation được xếp round-robin trên các
+GPU được chỉ định:
+
+```bash
+uv run --project pipeline/duplexchat python -m duplexchat single \
+  --input mixture.wav --output-dir outputs/duplexchat-gpu \
+  --device-ids 0 1
+```
+
 Nếu input không có đúng hai speaker, Vilier/Sommelier fail thay vì tạo output giả.
 Với `--debug`, Cholimex ghi từng overlap tại
 `debug/overlaps/<id>/{mixture,audio.stereo}.wav`; Vilier giữ các native source
 debug ở `debug/overlaps/<id>/{mixture,source_01,source_02}.wav`.
-DuplexChat ghi raw diarization/linking artifacts trong `debug/phase_02_diarization/`.
 
 ## Metrics và benchmark
 
-### Single audio có ground truth
+### Full-track pipeline có ground truth
 
 Để có metric separation thật, phải đưa **cả hai** reference source. Không có
 reference, `benchmark.json` vẫn được ghi nhưng các metric reference là `null`;
@@ -80,6 +116,31 @@ Metric được tính với PIT speaker assignment trên toàn bộ audio, non-o
 overlap: PIT-SI-SDR, SI-SDRi, SAR, SIR, ESTOI, PESQ, crosstalk rate, VAD F1,
 onset/offset MAE, overlap F1 và overlap IoU. `PESQ`/`ESTOI` có thể là `null`
 nếu package optional không sẵn có hoặc đoạn audio không hợp lệ.
+
+Phần này áp dụng cho Vilier, Cholimex và Sommelier; DuplexChat không nhận cờ
+ground truth và không chạy metric GT legacy.
+
+### DuplexChat reference-free benchmark
+
+Mỗi dialogue của DuplexChat được chấm trong
+`conversation_*/benchmark/report.json`; `outputs/duplexchat/benchmark.json`
+tổng hợp cả collection. Không cần ground truth. Các chỉ số gồm DNSMOS
+SIG/BAK/OVRL, SQ-STOI, SQ-PESQ, SQ-SI-SDR, ITC/ITD, speech activity/overlap,
+turn-taking, overlap transition, backchannel candidate và leakage proxy.
+DNSMOS chỉ có khi thư mục local chứa `sig_bak_ovr.onnx` và `model_v8.onnx`; nếu
+thiếu asset, metric này được ghi là unavailable còn các metric khác vẫn chạy.
+
+Có thể chấm lại một WAV stereo hoặc toàn bộ collection bằng script chung:
+
+```bash
+uv run --project . python scripts/benchmark_stereo.py \
+  --audio outputs/duplexchat/conversations/conversation_00000/audio.stereo.wav \
+  --output-dir outputs/benchmark-one
+
+uv run --project . python scripts/benchmark_stereo.py \
+  --corpus outputs/duplexchat/conversations \
+  --output-dir outputs/benchmark-collection
+```
 
 ## Smoke test sáu checkpoint separation
 

@@ -17,7 +17,7 @@ def build_pipeline_parser(name: str) -> argparse.ArgumentParser:
     single.add_argument("--output-dir", type=Path, required=True)
     single.add_argument("--debug", action="store_true")
     if name == "duplexchat":
-        single.add_argument("--separate-chunk", type=float, default=120.0)
+        single.add_argument("--separation-chunk", "--separate-chunk", dest="separate_chunk", type=float, default=120.0)
         single.add_argument("--device-ids", type=int, nargs="+")
     if name != "duplexchat":
         single.add_argument("--gt-speaker-a", type=Path)
