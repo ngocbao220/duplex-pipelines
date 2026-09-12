@@ -1,102 +1,113 @@
-"""Lazy optional model metrics. Each failure is converted to an unavailable result."""
+"""Lazy optional model metrics for already prepared 16 kHz speech."""
 
 from __future__ import annotations
 
+from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
+
+
+SAMPLE_RATE = 16000
+SQUIM_WINDOW_SAMPLES = SAMPLE_RATE * 10
+SQUIM_BATCH_SIZE = 8
+SPEAKER_WINDOW_SAMPLES = SAMPLE_RATE * 3
+SPEAKER_BATCH_SIZE = 16
 
 
 def unavailable(reason: str) -> dict:
     return {"status": "unavailable", "reason": reason}
 
 
-def _per_channel(metric: Callable[[np.ndarray, int], dict], left: np.ndarray, right: np.ndarray, sample_rate: int) -> dict:
-    left_result, right_result = metric(left, sample_rate), metric(right, sample_rate)
-    result = {"left": left_result, "right": right_result}
-    if left_result.get("status") == right_result.get("status") == "ok":
-        shared = set(left_result) & set(right_result) - {"status"}
-        result["mean"] = {name: float((left_result[name] + right_result[name]) / 2) for name in shared}
-    return result
+def prepare_speech(audio: np.ndarray, sample_rate: int, mask: np.ndarray, frame_sec: float) -> np.ndarray:
+    """Extract VAD-active samples and resample once for all model metrics."""
+    frame_samples = max(1, round(frame_sec * sample_rate))
+    speech = np.concatenate(
+        [audio[index * frame_samples:min((index + 1) * frame_samples, len(audio))]
+         for index, active in enumerate(mask) if active]
+    ) if mask.any() else np.array([], dtype=np.float32)
+    if sample_rate == SAMPLE_RATE or not speech.size:
+        return np.asarray(speech, dtype=np.float32)
+    import torch
+    import torchaudio.functional as ta_functional
+
+    return ta_functional.resample(torch.from_numpy(speech).unsqueeze(0), sample_rate, SAMPLE_RATE).squeeze(0).numpy()
 
 
-def acoustic_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, left_mask: np.ndarray, right_mask: np.ndarray, frame_sec: float, device: str, dnsmos_model_dir: Path | None = None) -> dict:
-    """Compute reference-free SQUIM where its bundled model is available.
-
-    DNSMOS runs only when both official P.835 ONNX assets are available locally.
-    """
+def acoustic_metrics(left: np.ndarray, right: np.ndarray, device: str, dnsmos_model_dir: Path | None = None) -> dict:
+    """Compute reference-free acoustic metrics from prepared 16 kHz speech."""
+    squim_left, squim_right = _squim_many((left, right), device)
     return {
-        "dnsmos": _dnsmos_metrics(left, right, sample_rate, left_mask, right_mask, frame_sec, dnsmos_model_dir),
-        "squim": _per_channel(lambda audio, sr: _squim(audio, sr, left_mask if audio is left else right_mask, frame_sec, device), left, right, sample_rate),
+        "dnsmos": _dnsmos_metrics(left, right, dnsmos_model_dir),
+        "squim": _combine_channels(squim_left, squim_right),
     }
 
 
-def _dnsmos_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, left_mask: np.ndarray, right_mask: np.ndarray, frame_sec: float, model_dir: Path | None) -> dict:
+@lru_cache(maxsize=4)
+def _dnsmos_scorer(model_dir: Path):
+    from .dnsmos import DNSMOSScorer
+
+    return DNSMOSScorer(model_dir)
+
+
+def _dnsmos_metrics(left: np.ndarray, right: np.ndarray, model_dir: Path | None) -> dict:
     if model_dir is None:
         missing = unavailable("DNSMOS model directory was not configured")
         return {"left": missing, "right": missing}
-    from .dnsmos import DNSMOSScorer
-
-    scorer = DNSMOSScorer(model_dir)
-    
-    def extract_speech(audio, mask):
-        frame_samples = max(1, round(frame_sec * sample_rate))
-        return np.concatenate([audio[i * frame_samples:min((i + 1) * frame_samples, len(audio))] for i, active in enumerate(mask) if active]) if mask.any() else np.array([], dtype=np.float32)
-
-    return _per_channel(lambda audio, sr: scorer.score(extract_speech(audio, left_mask if audio is left else right_mask), sr), left, right, sample_rate)
+    scorer = _dnsmos_scorer(Path(model_dir))
+    return _combine_channels(scorer.score(left, SAMPLE_RATE), scorer.score(right, SAMPLE_RATE))
 
 
 @lru_cache(maxsize=2)
 def _squim_model(device: str):
-    import torch
     import torchaudio
 
-    model = torchaudio.pipelines.SQUIM_OBJECTIVE.get_model().to(device).eval()
-    return model
+    return torchaudio.pipelines.SQUIM_OBJECTIVE.get_model().to(device).eval()
 
 
-def _squim(audio: np.ndarray, sample_rate: int, mask: np.ndarray, frame_sec: float, device: str) -> dict:
+def _squim_many(audios: tuple[np.ndarray, np.ndarray], device: str) -> tuple[dict, dict]:
+    """Score equal-length chunks together without changing per-track averaging."""
     try:
         import torch
-        import torchaudio.functional as ta_functional
 
-        frame_samples = max(1, round(frame_sec * sample_rate))
-        speech = np.concatenate([audio[i * frame_samples:min((i + 1) * frame_samples, len(audio))] for i, active in enumerate(mask) if active]) if mask.any() else np.array([], dtype=np.float32)
-        waveform = torch.from_numpy(speech).unsqueeze(0)
-        if sample_rate != 16000 and waveform.numel() > 0:
-            waveform = ta_functional.resample(waveform, sample_rate, 16000)
-        
-        chunk_size = 16000 * 10
-        stois, pesqs, si_sdrs = [], [], []
         model = _squim_model(device)
-        for start in range(0, waveform.shape[1], chunk_size):
-            chunk = waveform[:, start:start + chunk_size]
-            if chunk.shape[1] < 16000 * 1:
-                continue
-            with torch.inference_mode():
-                stoi, pesq, si_sdr = model(chunk.to(device))
-                stois.append(float(stoi.item()))
-                pesqs.append(float(pesq.item()))
-                si_sdrs.append(float(si_sdr.item()))
-        
-        if not stois:
-            return unavailable("Audio too short for SQUIM")
-        
-        return {
-            "status": "ok", "sq_stoi": sum(stois)/len(stois), "sq_pesq": sum(pesqs)/len(pesqs),
-            "sq_si_sdr": sum(si_sdrs)/len(si_sdrs),
-        }
-    except Exception as error:  # optional model may require an unavailable download/runtime
-        return unavailable(f"SQUIM unavailable: {type(error).__name__}: {error}")
+        chunks: dict[int, list[tuple[int, object]]] = defaultdict(list)
+        values = [[], []]
+        for channel, audio in enumerate(audios):
+            waveform = torch.from_numpy(np.asarray(audio, dtype=np.float32))
+            for start in range(0, waveform.numel(), SQUIM_WINDOW_SAMPLES):
+                chunk = waveform[start:start + SQUIM_WINDOW_SAMPLES]
+                if chunk.numel() >= SAMPLE_RATE:
+                    chunks[chunk.numel()].append((channel, chunk))
+        for length_chunks in chunks.values():
+            for start in range(0, len(length_chunks), SQUIM_BATCH_SIZE):
+                batch_items = length_chunks[start:start + SQUIM_BATCH_SIZE]
+                batch = torch.stack([chunk for _, chunk in batch_items]).to(device)
+                with torch.inference_mode():
+                    stois, pesqs, si_sdrs = model(batch)
+                for (channel, _), stoi, pesq, si_sdr in zip(batch_items, stois, pesqs, si_sdrs):
+                    values[channel].append((float(stoi.item()), float(pesq.item()), float(si_sdr.item())))
+        return tuple(_squim_result(channel_values) for channel_values in values)  # type: ignore[return-value]
+    except Exception as error:
+        failure = unavailable(f"SQUIM unavailable: {type(error).__name__}: {error}")
+        return failure, failure
 
 
-def speaker_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, left_mask: np.ndarray, right_mask: np.ndarray, frame_sec: float, device: str) -> dict:
+def _squim_result(values: list[tuple[float, float, float]]) -> dict:
+    if not values:
+        return unavailable("Audio too short for SQUIM")
+    scores = np.asarray(values)
+    return {
+        "status": "ok", "sq_stoi": float(scores[:, 0].mean()), "sq_pesq": float(scores[:, 1].mean()),
+        "sq_si_sdr": float(scores[:, 2].mean()),
+    }
+
+
+def speaker_metrics(left: np.ndarray, right: np.ndarray, device: str) -> dict:
     """ITC/ITD from cached SpeechBrain ECAPA embeddings; no ground truth is used."""
     try:
-        left_embeddings = _embeddings(left, sample_rate, left_mask, frame_sec, device)
-        right_embeddings = _embeddings(right, sample_rate, right_mask, frame_sec, device)
+        left_embeddings, right_embeddings = _embeddings_many((left, right), device)
     except Exception as error:
         failure = unavailable(f"speaker encoder unavailable: {type(error).__name__}: {error}")
         return {"itc": {"left": failure, "right": failure, "mean": failure}, "itd": failure}
@@ -123,26 +134,34 @@ def _speaker_encoder(device: str):
     return EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb", run_opts={"device": device})
 
 
-def _embeddings(audio: np.ndarray, sample_rate: int, mask: np.ndarray, frame_sec: float, device: str) -> np.ndarray | None:
+def _embeddings_many(audios: tuple[np.ndarray, np.ndarray], device: str) -> tuple[np.ndarray | None, np.ndarray | None]:
     import torch
-    import torchaudio.functional as ta_functional
 
-    frame_samples = max(1, round(frame_sec * sample_rate))
-    speech = np.concatenate([audio[i * frame_samples:min((i + 1) * frame_samples, len(audio))] for i, active in enumerate(mask) if active]) if mask.any() else np.array([], dtype=np.float32)
-    target = 16000
-    signal = torch.from_numpy(speech).float().unsqueeze(0)
-    if sample_rate != target and signal.numel():
-        signal = ta_functional.resample(signal, sample_rate, target)
-    window = target * 3
-    if signal.shape[1] < window:
-        return None
+    windows: list[tuple[int, object]] = []
+    for channel, audio in enumerate(audios):
+        signal = torch.from_numpy(np.asarray(audio, dtype=np.float32))
+        for start in range(0, signal.numel() - SPEAKER_WINDOW_SAMPLES + 1, SPEAKER_WINDOW_SAMPLES):
+            windows.append((channel, signal[start:start + SPEAKER_WINDOW_SAMPLES]))
+    if not windows:
+        return None, None
     encoder = _speaker_encoder(device)
-    embeddings = []
-    for start in range(0, signal.shape[1] - window + 1, window):
+    values = [[], []]
+    for start in range(0, len(windows), SPEAKER_BATCH_SIZE):
+        batch_items = windows[start:start + SPEAKER_BATCH_SIZE]
+        batch = torch.stack([window for _, window in batch_items]).to(device)
         with torch.inference_mode():
-            embedding = encoder.encode_batch(signal[:, start:start + window].to(device)).squeeze().detach().cpu().numpy()
-        embeddings.append(embedding)
-    return np.asarray(embeddings) if embeddings else None
+            embeddings = encoder.encode_batch(batch).detach().cpu().numpy().reshape(len(batch_items), -1)
+        for (channel, _), embedding in zip(batch_items, embeddings):
+            values[channel].append(embedding)
+    return tuple(np.asarray(channel_values) if channel_values else None for channel_values in values)  # type: ignore[return-value]
+
+
+def _combine_channels(left: dict, right: dict) -> dict:
+    result = {"left": left, "right": right}
+    if left.get("status") == right.get("status") == "ok":
+        shared = set(left) & set(right) - {"status"}
+        result["mean"] = {name: float((left[name] + right[name]) / 2) for name in shared}
+    return result
 
 
 def _itc(embeddings: np.ndarray | None) -> dict:

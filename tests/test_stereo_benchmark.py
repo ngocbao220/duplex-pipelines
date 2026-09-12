@@ -73,10 +73,102 @@ def test_optional_model_failure_is_reported_without_crashing(monkeypatch):
 
     monkeypatch.setattr(models, "_squim_model", lambda _device: (_ for _ in ()).throw(RuntimeError("model unavailable")))
 
-    result = acoustic_metrics(np.zeros(160), np.zeros(160), 16000, "cpu")
+    result = acoustic_metrics(np.zeros(160), np.zeros(160), "cpu")
 
     assert result["squim"]["left"]["status"] == "unavailable"
     assert "model unavailable" in result["squim"]["left"]["reason"]
+
+
+def test_dnsmos_scorer_is_reused_for_multiple_metric_calls(monkeypatch, tmp_path):
+    import core.stereo_benchmark.models as models
+
+    created = []
+
+    class FakeScorer:
+        def __init__(self, model_dir):
+            created.append(model_dir)
+
+        def score(self, _audio, _sample_rate):
+            return {"status": "ok", "ovrl": 3.0}
+
+    models._dnsmos_scorer.cache_clear()
+    monkeypatch.setattr("core.stereo_benchmark.dnsmos.DNSMOSScorer", FakeScorer)
+
+    acoustic_metrics(np.ones(16000), np.ones(16000), "cpu", tmp_path)
+    acoustic_metrics(np.ones(16000), np.ones(16000), "cpu", tmp_path)
+
+    assert created == [tmp_path]
+
+
+def test_squim_batches_equal_length_windows(monkeypatch):
+    import torch
+    import core.stereo_benchmark.models as models
+
+    batches = []
+
+    class FakeModel:
+        def __call__(self, audio):
+            batches.append(audio.shape[0])
+            return torch.ones(audio.shape[0]), torch.full((audio.shape[0],), 2.0), torch.full((audio.shape[0],), 3.0)
+
+    monkeypatch.setattr(models, "_squim_model", lambda _device: FakeModel())
+
+    result = acoustic_metrics(np.ones(16000 * 20), np.ones(16000 * 20), "cpu")
+
+    assert batches == [4]
+    assert result["squim"]["mean"] == {"sq_stoi": 1.0, "sq_pesq": 2.0, "sq_si_sdr": 3.0}
+
+
+def test_speaker_encoder_batches_windows_from_both_channels(monkeypatch):
+    import torch
+    import core.stereo_benchmark.models as models
+
+    batches = []
+
+    class FakeEncoder:
+        def encode_batch(self, audio):
+            batches.append(audio.shape[0])
+            return torch.tensor([[[1.0, 0.0]], [[1.0, 0.0]], [[0.0, 1.0]], [[0.0, 1.0]]])
+
+    monkeypatch.setattr(models, "_speaker_encoder", lambda _device: FakeEncoder())
+
+    result = models.speaker_metrics(np.ones(16000 * 6), np.ones(16000 * 6), "cpu")
+
+    assert batches == [4]
+    assert result["itc"]["mean"]["status"] == "ok"
+    assert result["itd"]["status"] == "ok"
+
+
+def test_benchmark_reuses_prepared_speech_for_acoustic_and_speaker_metrics(monkeypatch, tmp_path):
+    import core.stereo_benchmark.runner as runner
+
+    audio_path = tmp_path / "stereo.wav"
+    sf.write(audio_path, np.ones((16000, 2)), 16000)
+    prepared, calls = [], []
+
+    def fake_prepare(audio, *_args):
+        value = np.asarray(audio, dtype=np.float32)
+        prepared.append(value)
+        return value
+
+    def fake_acoustic(left, right, *_args):
+        calls.append((left, right))
+        return {"dnsmos": {"left": {"status": "unavailable"}}, "squim": {"left": {"status": "unavailable"}}}
+
+    def fake_speaker(left, right, *_args):
+        calls.append((left, right))
+        return {"itc": {"mean": {"status": "unavailable"}}, "itd": {"status": "unavailable"}}
+
+    monkeypatch.setattr(runner, "prepare_speech", fake_prepare)
+    monkeypatch.setattr(runner, "acoustic_metrics", fake_acoustic)
+    monkeypatch.setattr(runner, "speaker_metrics", fake_speaker)
+
+    report, _ = runner.run_benchmark(audio_path, tmp_path / "report", device="cpu")
+
+    assert len(prepared) == 2
+    assert calls[0][0] is calls[1][0]
+    assert calls[0][1] is calls[1][1]
+    assert report["runtime"]["total_seconds"] >= 0
 
 
 def test_dnsmos_reports_missing_model_assets_without_crashing(tmp_path):

@@ -7,6 +7,7 @@ import json
 import platform
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 import soundfile as sf
@@ -19,7 +20,7 @@ from .dynamics import (
     MAX_BACKCHANNEL_DURATION_SEC, MERGE_GAP_SEC, MIN_TURN_DURATION_SEC,
     analyze_turns, inactive_channel_energy_ratio_db,
 )
-from .models import acoustic_metrics, speaker_metrics
+from .models import acoustic_metrics, prepare_speech, speaker_metrics
 from .report import flatten_report, render_tables, summarize_reports
 
 
@@ -38,7 +39,9 @@ def resolve_device(requested: str) -> str:
 
 def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debug: bool = False, dnsmos_model_dir: Path | None = Path("models/dnsmos")) -> tuple[dict, Path]:
     """Run reference-free diagnostics for a single, two-channel WAV/audio file."""
+    started = perf_counter()
     audio = load_stereo(audio_path)
+    loaded_at = perf_counter()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     selected_device = resolve_device(device)
@@ -51,19 +54,40 @@ def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debu
     frame_sec = activity_config.frame_sec
     activity = activity_summary(left_mask, right_mask, frame_sec)
     dynamics = analyze_turns(left_mask, right_mask, frame_sec)
+    activity_at = perf_counter()
+    left_speech = prepare_speech(audio.left, audio.sample_rate, left_mask, frame_sec)
+    right_speech = prepare_speech(audio.right, audio.sample_rate, right_mask, frame_sec)
+    prepared_at = perf_counter()
+    acoustic = acoustic_metrics(left_speech, right_speech, selected_device, dnsmos_model_dir)
+    acoustic_at = perf_counter()
+    identity = speaker_metrics(left_speech, right_speech, selected_device)
+    identity_at = perf_counter()
+    leakage = inactive_channel_energy_ratio_db(audio.left, audio.right, left_mask, right_mask, frame_sec, audio.sample_rate)
+    diagnostics_at = perf_counter()
     report = {
         "input": {
             "path": str(audio.path.resolve()), "sha256": _sha256(audio.path), "sample_rate": audio.sample_rate,
             "duration_sec": audio.duration_sec, "samples": audio.frames, "channels": 2,
             "left": "estimated speaker track 1", "right": "estimated speaker track 2",
         },
-        "acoustic_quality": acoustic_metrics(audio.left, audio.right, audio.sample_rate, left_mask, right_mask, frame_sec, selected_device, dnsmos_model_dir),
-        "speaker_identity": speaker_metrics(audio.left, audio.right, audio.sample_rate, left_mask, right_mask, frame_sec, selected_device),
+        "acoustic_quality": acoustic,
+        "speaker_identity": identity,
         "speech_activity": {"vad": "energy_vad", "left_threshold_dbfs": left_threshold, "right_threshold_dbfs": right_threshold, **activity},
         "turn_taking": {key: value for key, value in dynamics.items() if key not in {"turns", "all_talk_spurts", "transitions", "backchannel_candidates"}},
         "backchannel": {"method": "VAD-based candidate; no ASR/linguistic criterion", "count": len(dynamics["backchannel_candidates"]), "per_minute": dynamics["backchannels_per_min"], "mean_duration_sec": dynamics["mean_backchannel_duration_sec"]},
-        "leakage_proxy": {"name": "inactive_channel_energy_ratio_db", **inactive_channel_energy_ratio_db(audio.left, audio.right, left_mask, right_mask, frame_sec, audio.sample_rate)},
-        "runtime": {"timestamp_utc": datetime.now(UTC).isoformat(), "device": selected_device},
+        "leakage_proxy": {"name": "inactive_channel_energy_ratio_db", **leakage},
+        "runtime": {
+            "timestamp_utc": datetime.now(UTC).isoformat(), "device": selected_device,
+            "stage_seconds": {
+                "load_audio": loaded_at - started,
+                "activity_and_turns": activity_at - loaded_at,
+                "prepare_speech": prepared_at - activity_at,
+                "acoustic_metrics": acoustic_at - prepared_at,
+                "speaker_identity": identity_at - acoustic_at,
+                "diagnostics": diagnostics_at - identity_at,
+            },
+            "total_seconds": diagnostics_at - started,
+        },
         "versions": {"benchmark": "0.1.0", "python": platform.python_version(), "torch": torch.__version__, "torchaudio": torchaudio.__version__},
         "config": {"activity": config_dict(activity_config), "turn_analysis": {"merge_gap_sec": MERGE_GAP_SEC, "min_turn_duration_sec": MIN_TURN_DURATION_SEC, "max_backchannel_duration_sec": MAX_BACKCHANNEL_DURATION_SEC}},
     }
@@ -104,6 +128,7 @@ def discover_corpus_audio(corpus_dir: Path) -> list[Path]:
 
 def run_corpus_benchmark(corpus_dir: Path, output_dir: Path, device: str = "auto", debug: bool = False, dnsmos_model_dir: Path | None = Path("models/dnsmos")) -> tuple[dict, Path]:
     """Benchmark all audio candidates, retaining per-file failures instead of aborting a corpus."""
+    started = perf_counter()
     corpus_dir, output_dir = Path(corpus_dir), Path(output_dir)
     candidates = discover_corpus_audio(corpus_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -122,7 +147,11 @@ def run_corpus_benchmark(corpus_dir: Path, output_dir: Path, device: str = "auto
             samples.append({"source": source, "status": "failed", "error": message})
             rows.append({"source": source, "status": "failed", "error": message})
     summary = summarize_reports(reports)
-    corpus_report = {"input": str(corpus_dir.resolve()), "candidate_count": len(candidates), "summary": summary, "samples": samples}
+    elapsed = perf_counter() - started
+    corpus_report = {
+        "input": str(corpus_dir.resolve()), "candidate_count": len(candidates), "summary": summary, "samples": samples,
+        "runtime": {"total_seconds": elapsed, "files_per_second": len(candidates) / elapsed if elapsed else None},
+    }
     report_path = output_dir / "corpus_report.json"
     _write_json(report_path, corpus_report)
     (output_dir / "summary.md").write_text(render_tables(summary) + "\n", encoding="utf-8")
@@ -137,7 +166,9 @@ def print_summary(report: dict, report_path: Path) -> None:
     print("\n" + render_tables(summarize_reports([report])))
     if warnings := render_warnings([report]):
         print(warnings)
-    print(f"\nBenchmark complete\nJSON report: {report_path}")
+    runtime = report["runtime"]
+    stages = ", ".join(f"{name}={seconds:.2f}s" for name, seconds in runtime["stage_seconds"].items())
+    print(f"\nBenchmark complete in {runtime['total_seconds']:.2f}s ({stages})\nJSON report: {report_path}")
 
 
 def _status(value: dict) -> str:

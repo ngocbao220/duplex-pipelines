@@ -31,3 +31,4 @@ def test_collection_benchmark_writes_one_row_per_conversation(monkeypatch, tmp_p
     assert summary["mode"] == "reference_free"
     assert summary["aggregate"]["duration_sec"] == 5.0
     assert len(summary["conversations"]) == 2
+    assert summary["runtime"]["total_seconds"] >= 0
