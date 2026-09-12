@@ -22,25 +22,30 @@ def _per_channel(metric: Callable[[np.ndarray, int], dict], left: np.ndarray, ri
     return result
 
 
-def acoustic_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, device: str, dnsmos_model_dir: Path | None = None) -> dict:
+def acoustic_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, left_mask: np.ndarray, right_mask: np.ndarray, frame_sec: float, device: str, dnsmos_model_dir: Path | None = None) -> dict:
     """Compute reference-free SQUIM where its bundled model is available.
 
     DNSMOS runs only when both official P.835 ONNX assets are available locally.
     """
     return {
-        "dnsmos": _dnsmos_metrics(left, right, sample_rate, dnsmos_model_dir),
-        "squim": _per_channel(lambda audio, sr: _squim(audio, sr, device), left, right, sample_rate),
+        "dnsmos": _dnsmos_metrics(left, right, sample_rate, left_mask, right_mask, frame_sec, dnsmos_model_dir),
+        "squim": _per_channel(lambda audio, sr: _squim(audio, sr, left_mask if audio is left else right_mask, frame_sec, device), left, right, sample_rate),
     }
 
 
-def _dnsmos_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, model_dir: Path | None) -> dict:
+def _dnsmos_metrics(left: np.ndarray, right: np.ndarray, sample_rate: int, left_mask: np.ndarray, right_mask: np.ndarray, frame_sec: float, model_dir: Path | None) -> dict:
     if model_dir is None:
         missing = unavailable("DNSMOS model directory was not configured")
         return {"left": missing, "right": missing}
     from .dnsmos import DNSMOSScorer
 
     scorer = DNSMOSScorer(model_dir)
-    return _per_channel(scorer.score, left, right, sample_rate)
+    
+    def extract_speech(audio, mask):
+        frame_samples = max(1, round(frame_sec * sample_rate))
+        return np.concatenate([audio[i * frame_samples:min((i + 1) * frame_samples, len(audio))] for i, active in enumerate(mask) if active]) if mask.any() else np.array([], dtype=np.float32)
+
+    return _per_channel(lambda audio, sr: scorer.score(extract_speech(audio, left_mask if audio is left else right_mask), sr), left, right, sample_rate)
 
 
 @lru_cache(maxsize=2)
@@ -52,13 +57,15 @@ def _squim_model(device: str):
     return model
 
 
-def _squim(audio: np.ndarray, sample_rate: int, device: str) -> dict:
+def _squim(audio: np.ndarray, sample_rate: int, mask: np.ndarray, frame_sec: float, device: str) -> dict:
     try:
         import torch
         import torchaudio.functional as ta_functional
 
-        waveform = torch.from_numpy(audio).unsqueeze(0)
-        if sample_rate != 16000:
+        frame_samples = max(1, round(frame_sec * sample_rate))
+        speech = np.concatenate([audio[i * frame_samples:min((i + 1) * frame_samples, len(audio))] for i, active in enumerate(mask) if active]) if mask.any() else np.array([], dtype=np.float32)
+        waveform = torch.from_numpy(speech).unsqueeze(0)
+        if sample_rate != 16000 and waveform.numel() > 0:
             waveform = ta_functional.resample(waveform, sample_rate, 16000)
         
         chunk_size = 16000 * 10

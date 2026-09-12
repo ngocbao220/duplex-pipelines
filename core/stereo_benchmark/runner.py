@@ -57,7 +57,7 @@ def run_benchmark(audio_path: Path, output_dir: Path, device: str = "auto", debu
             "duration_sec": audio.duration_sec, "samples": audio.frames, "channels": 2,
             "left": "estimated speaker track 1", "right": "estimated speaker track 2",
         },
-        "acoustic_quality": acoustic_metrics(audio.left, audio.right, audio.sample_rate, selected_device, dnsmos_model_dir),
+        "acoustic_quality": acoustic_metrics(audio.left, audio.right, audio.sample_rate, left_mask, right_mask, frame_sec, selected_device, dnsmos_model_dir),
         "speaker_identity": speaker_metrics(audio.left, audio.right, audio.sample_rate, left_mask, right_mask, frame_sec, selected_device),
         "speech_activity": {"vad": "energy_vad", "left_threshold_dbfs": left_threshold, "right_threshold_dbfs": right_threshold, **activity},
         "turn_taking": {key: value for key, value in dynamics.items() if key not in {"turns", "all_talk_spurts", "transitions", "backchannel_candidates"}},
