@@ -249,14 +249,18 @@ def _maybe_swap(
 ) -> tuple[torch.Tensor, bool]:
     if overlap_samples <= 0 or prev_overlap.shape[0] != 2 or curr_chunk.shape[0] != 2:
         return curr_chunk, False
-    curr_ov = curr_chunk[:, :overlap_samples]
+    effective_overlap = min(overlap_samples, prev_overlap.shape[-1], curr_chunk.shape[-1])
+    if effective_overlap <= 0:
+        return curr_chunk, False
+    prev_ov = prev_overlap[:, -effective_overlap:]
+    curr_ov = curr_chunk[:, :effective_overlap]
     direct = (
-        _channel_similarity(prev_overlap[0], curr_ov[0])
-        + _channel_similarity(prev_overlap[1], curr_ov[1])
+        _channel_similarity(prev_ov[0], curr_ov[0])
+        + _channel_similarity(prev_ov[1], curr_ov[1])
     )
     swapped = (
-        _channel_similarity(prev_overlap[0], curr_ov[1])
-        + _channel_similarity(prev_overlap[1], curr_ov[0])
+        _channel_similarity(prev_ov[0], curr_ov[1])
+        + _channel_similarity(prev_ov[1], curr_ov[0])
     )
     if swapped > direct:
         return curr_chunk[[1, 0], :], True

@@ -10,6 +10,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "duple
 from duplexchat import preprocess, separation_backend  # noqa: E402
 
 
+def test_maybe_swap_clamps_mismatched_overlap_lengths():
+    previous = torch.zeros(2, 3_000)
+    current = torch.zeros(2, 383)
+
+    result, swapped = separation_backend._maybe_swap(previous, current, 3_000)
+
+    assert result.shape == current.shape
+    assert swapped is False
+
+
 def test_prepare_input_creates_16k_mono_artifact(monkeypatch, tmp_path):
     calls = []
 
