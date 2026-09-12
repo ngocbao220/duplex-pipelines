@@ -959,8 +959,11 @@ source = { editable = "." }
 dependencies = [
     { name = "diffusers" },
     { name = "huggingface-hub" },
+    { name = "librosa" },
+    { name = "onnxruntime" },
     { name = "pyannote-audio" },
     { name = "soundfile" },
+    { name = "speechbrain" },
     { name = "torch" },
     { name = "torchaudio" },
     { name = "torchcodec" },
@@ -969,11 +972,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-benchmark = [
-    { name = "librosa" },
-    { name = "onnxruntime" },
-    { name = "speechbrain" },
-]
 cholimex = [
     { name = "speechbrain" },
 ]
@@ -1006,15 +1004,15 @@ requires-dist = [
     { name = "diffusers", marker = "extra == 'separation-dialoguesidon'" },
     { name = "huggingface-hub" },
     { name = "huggingface-hub", marker = "extra == 'separation-dialoguesidon'" },
-    { name = "librosa", marker = "extra == 'benchmark'", specifier = ">=0.10" },
+    { name = "librosa", specifier = ">=0.10" },
     { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'diarization-sortformer'" },
-    { name = "onnxruntime", marker = "extra == 'benchmark'" },
+    { name = "onnxruntime" },
     { name = "packaging", marker = "extra == 'diarization-sortformer'" },
     { name = "pyannote-audio" },
     { name = "pyannote-audio", marker = "extra == 'diarization-pyannote'", specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "soundfile" },
-    { name = "speechbrain", marker = "extra == 'benchmark'", specifier = ">=1.0,<2.0" },
+    { name = "speechbrain", specifier = ">=1.0,<2.0" },
     { name = "speechbrain", marker = "extra == 'cholimex'", specifier = ">=1.0,<2.0" },
     { name = "speechbrain", marker = "extra == 'duplexchat'", specifier = ">=1.0,<2.0" },
     { name = "speechbrain", marker = "extra == 'separation-sepformer'", specifier = ">=1.0,<2.0" },
@@ -1024,7 +1022,7 @@ requires-dist = [
     { name = "tqdm" },
     { name = "wrapt", specifier = ">=2.4.0" },
 ]
-provides-extras = ["dev", "cholimex", "duplexchat", "diarization-pyannote", "diarization-sortformer", "separation-dialoguesidon", "separation-sepformer", "benchmark"]
+provides-extras = ["dev", "cholimex", "duplexchat", "diarization-pyannote", "diarization-sortformer", "separation-dialoguesidon", "separation-sepformer"]
 
 [[package]]
 name = "einops"
