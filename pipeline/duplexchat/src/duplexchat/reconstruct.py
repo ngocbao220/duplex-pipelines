@@ -11,6 +11,7 @@ from core.outputs import save_stereo_wav, save_wav, write_json
 
 
 OUTPUT_SAMPLE_RATE = 24_000
+INPUT_SAMPLE_RATE = 16_000
 
 
 def _to_output_rate(waveform, sample_rate):
@@ -31,7 +32,17 @@ def write_stereo(output_prefix, phase_dir, first_channel, second_channel, sample
     save_stereo_wav(stereo, first_channel, second_channel, OUTPUT_SAMPLE_RATE)
     phase_stereo = phase_dir / "phase_04_separation" / "audio.stereo.wav"
     save_stereo_wav(phase_stereo, first_channel, second_channel, OUTPUT_SAMPLE_RATE)
-    write_json(phase_dir / "phase_04_separation" / "separation.json", {"backend": backend, "model": model, "sample_rate": OUTPUT_SAMPLE_RATE, "stereo": str(stereo)})
+    write_json(
+        phase_dir / "phase_04_separation" / "separation.json",
+        {
+            "backend": backend,
+            "model": model,
+            "sample_rate": OUTPUT_SAMPLE_RATE,
+            "input_sample_rate": INPUT_SAMPLE_RATE,
+            "output_sample_rate": OUTPUT_SAMPLE_RATE,
+            "stereo": str(stereo),
+        },
+    )
     return stereo
 
 

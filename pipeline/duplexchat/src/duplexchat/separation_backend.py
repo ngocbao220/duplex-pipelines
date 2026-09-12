@@ -21,7 +21,6 @@ from .model_options import SEPARATION_MODELS, resolve_model_alias
 REPO_ID = "sarulab-speech/DialogueSidon"
 MODEL_FILES = ["ssl_encoder.pt2", "diffusion_head.pt2", "vae_decoder.pt2", "metadata.json"]
 SAMPLE_RATE_IN = 16_000
-DIALOGUESIDON_SAMPLE_RATE_IN = 24_000
 CHUNK_SECONDS = 120.0
 OVERLAP_SECONDS = 10.0
 
@@ -152,7 +151,7 @@ def _load_dialoguesidon_models(device: str = "cuda", model_id: str | None = None
             "scheduler": scheduler,
             "latent_dim": meta["latent_dim"],
             "sample_rate": meta["sample_rate"],
-            "input_sample_rate": DIALOGUESIDON_SAMPLE_RATE_IN,
+            "input_sample_rate": SAMPLE_RATE_IN,
             "device": torch_device,
             "backend": "dialoguesidon",
             "model_id": repo_id,

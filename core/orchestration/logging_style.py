@@ -54,6 +54,7 @@ class StepTimer:
         self.duration_sec = duration_sec
         self.details = details
         self.started = 0.0
+        self.elapsed = 0.0
 
     def __enter__(self):
         suffix = f" ({self.details})" if self.details else ""
@@ -63,6 +64,7 @@ class StepTimer:
 
     def __exit__(self, exc_type, exc, tb):
         elapsed = time.perf_counter() - self.started
+        self.elapsed = elapsed
         if exc is None:
             rtf = elapsed / self.duration_sec if self.duration_sec else 0.0
             self.logger.info("%s - Processing time: %.2fs, RT factor: %.4f", self.step, elapsed, rtf)

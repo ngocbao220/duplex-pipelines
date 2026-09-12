@@ -20,7 +20,7 @@ from .dialogue import dialogue_filter_summary, extract_valid_dialogues
 from .preprocess import prepare_input
 from .reconstruct import OUTPUT_SAMPLE_RATE, write_conversation_stereo
 from .separation import separate_waveform
-from .separation_backend import load_separation_models
+from .separation_backend import SAMPLE_RATE_IN, load_separation_models
 
 
 def resolve_output_dir(output_prefix: str, output_dir: str | None = None) -> Path:
@@ -59,6 +59,29 @@ def _release(model: object) -> None:
 def _devices(runtime_device: str, device_ids: list[int] | None) -> list[str]:
     ids = validate_multi_gpu(bool(device_ids), device_ids)
     return [f"cuda:{index}" for index in ids] if ids else [resolve_device(runtime_device, allow_cpu_fallback=True)]
+
+
+def _device_label(device: str) -> str:
+    if device == "cuda":
+        return "cuda:0"
+    return device
+
+
+def _log_run_summary(logger, audio_path, normalized, output_root, phase_dir, manifest, devices, conversations, segment_count, phase_times):
+    logger.info("Runtime devices: diarization=%s; separation=%s", _device_label(devices[0]), [_device_label(device) for device in devices])
+    logger.info("Detected conversations: %d", conversations)
+    logger.info("Run summary")
+    logger.info("  %-22s | %-24s | %-24s | %-44s | %8s", "Phase", "Input", "Output", "Saved at", "Time")
+    logger.info("  %s", "-" * 132)
+    rows = [
+        ("Preprocess", audio_path, "mono 16 kHz", normalized, phase_times.get("preprocess", 0.0)),
+        ("Speaker diarization", normalized.name, f"{segment_count} segments", phase_dir / "phase_02_diarization", phase_times.get("diarization", 0.0)),
+        ("Dialogue separation", f"{conversations} conversations", f"{conversations} stereo 24 kHz WAV", manifest, phase_times.get("separation")),
+    ]
+    for phase, input_name, output, saved_at, elapsed in rows:
+        duration = "SKIPPED" if elapsed is None else f"{elapsed:.2f}s"
+        logger.info("  %-22s | %-24s | %-24s | %-44s | %8s", phase, input_name, output, saved_at, duration)
+    logger.info("  Output root: %s", output_root)
 
 
 def _separate_dialogues(waveform, sample_rate, dialogues, devices, num_steps, chunk_seconds):
@@ -102,21 +125,28 @@ def run_single_audio(
     output_root = phase_dir.parent
     phase_dir.mkdir(parents=True, exist_ok=True)
 
-    with StepTimer(logger, "Step 0: Preprocess"):
+    phase_times = {}
+    with StepTimer(logger, "Step 0: Preprocess") as timer:
         normalized = prepare_input(audio_path, phase_dir)
-    with StepTimer(logger, "Step 1: Speaker diarization"):
+    phase_times["preprocess"] = timer.elapsed
+    logger.info("Runtime devices: diarization=%s; separation=%s", _device_label(devices[0]), [_device_label(device) for device in devices])
+    with StepTimer(logger, "Step 1: Speaker diarization") as timer:
         diarizer, segments = diarize(normalized, phase_dir, diarization_model, diarization_backend, devices[0], diarize_chunk, _no_progress)
+    phase_times["diarization"] = timer.elapsed
     _release(diarizer)
 
     summary = dialogue_filter_summary(segments)
     dialogues = extract_valid_dialogues(segments)
     logger.info("Conversation filtering=%s", summary)
+    logger.info("Detected conversations: %d", len(dialogues))
     write_dialogues_phase(phase_dir, dialogues)
     waveform, sample_rate = load_wav_tensor(normalized)
     rows = []
     if dialogues:
-        with StepTimer(logger, "Step 2: Dialogue separation"):
+        with StepTimer(logger, "Step 2: Dialogue separation") as timer:
+            logger.info("DialogueSidon sample rates: input=%d Hz, output=%d Hz", SAMPLE_RATE_IN, OUTPUT_SAMPLE_RATE)
             separated = _separate_dialogues(waveform, sample_rate, dialogues, devices, num_steps, separate_chunk)
+        phase_times["separation"] = timer.elapsed
         for index, dialogue, crop, first, second, output_rate in separated:
             first, second, mixture = (_resample(first, output_rate, OUTPUT_SAMPLE_RATE), _resample(second, output_rate, OUTPUT_SAMPLE_RATE), _resample(crop, sample_rate, OUTPUT_SAMPLE_RATE))
             length = min(first.shape[-1], second.shape[-1], mixture.shape[-1])
@@ -124,10 +154,14 @@ def run_single_audio(
             conversation_dir = output_root / "conversations" / f"conversation_{index:05d}"
             metadata = {"conversation_idx": index, "start": dialogue.start, "end": dialogue.end,
                         "duration": length / OUTPUT_SAMPLE_RATE, "speakers": dialogue.speakers,
-                        "segments": dialogue.segments, "sample_rate": OUTPUT_SAMPLE_RATE, "status": "complete"}
+                        "segments": dialogue.segments, "sample_rate": OUTPUT_SAMPLE_RATE,
+                        "input_sample_rate": SAMPLE_RATE_IN, "output_sample_rate": OUTPUT_SAMPLE_RATE,
+                        "status": "complete"}
             stereo = write_conversation_stereo(conversation_dir, mixture, first, second, OUTPUT_SAMPLE_RATE, metadata)
             rows.append({**metadata, "stereo": str(stereo), "mixture": str(conversation_dir / "mixture.wav")})
     manifest = output_root / "conversations" / "manifest.json"
     write_json(manifest, {"output_kind": "conversation_collection", "sample_rate": OUTPUT_SAMPLE_RATE,
+                          "input_sample_rate": SAMPLE_RATE_IN, "output_sample_rate": OUTPUT_SAMPLE_RATE,
                           "conversation_count": len(rows), "filter": summary, "conversations": rows})
+    _log_run_summary(logger, audio_path, normalized, output_root, phase_dir, manifest, devices, len(rows), len(segments), phase_times)
     return {"collection": manifest, "segments": segments, "conversations": rows, "devices": devices}

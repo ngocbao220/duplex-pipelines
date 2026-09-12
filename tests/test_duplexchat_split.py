@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import wave
 from pathlib import Path
 
 import torch
@@ -68,8 +69,17 @@ def test_runner_exports_only_conversation_stereo_artifacts(monkeypatch, tmp_path
     assert result["collection"] == output_root / "conversations" / "manifest.json"
     assert not (output_root / "audio.stereo.wav").exists()
     assert manifest["sample_rate"] == 24_000
+    assert manifest["input_sample_rate"] == 16_000
+    assert manifest["output_sample_rate"] == 24_000
     assert len(manifest["conversations"]) == 2
-    assert all(
-        (output_root / "conversations" / f"conversation_{index:05d}" / "audio.stereo.wav").exists()
-        for index in range(2)
-    )
+    for index, row in enumerate(manifest["conversations"]):
+        conversation_dir = output_root / "conversations" / f"conversation_{index:05d}"
+        with wave.open(str(conversation_dir / "audio.stereo.wav")) as audio:
+            assert audio.getnchannels() == 2
+            assert audio.getframerate() == 24_000
+        with wave.open(str(conversation_dir / "mixture.wav")) as audio:
+            assert audio.getnchannels() == 1
+            assert audio.getframerate() == 24_000
+            assert audio.getnframes() == row["duration"] * 24_000
+        assert row["input_sample_rate"] == 16_000
+        assert row["output_sample_rate"] == 24_000
