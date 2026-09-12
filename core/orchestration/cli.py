@@ -18,6 +18,7 @@ def build_pipeline_parser(name: str) -> argparse.ArgumentParser:
     single.add_argument("--debug", action="store_true")
     if name == "duplexchat":
         single.add_argument("--separation-chunk", "--separate-chunk", dest="separate_chunk", type=float, default=120.0)
+        single.add_argument("--diarize-chunk", dest="diarize_chunk", type=float, default=None)
         single.add_argument("--device-ids", type=int, nargs="+")
     if name != "duplexchat":
         single.add_argument("--gt-speaker-a", type=Path)
@@ -37,7 +38,7 @@ def run_pipeline_command(name: str, argv: list[str] | None = None) -> int:
                 raise SystemExit(f"Ground-truth audio file does not exist: {reference}")
         from .single import run_single
         return run_single(name, args.input.resolve(), args.output_dir.resolve(), args.debug,
-                           getattr(args, "separate_chunk", 120.0), getattr(args, "device_ids", None),
+                           getattr(args, "separate_chunk", 120.0), getattr(args, "diarize_chunk", None), getattr(args, "device_ids", None),
                            args.gt_speaker_a.resolve() if getattr(args, "gt_speaker_a", None) else None,
                            args.gt_speaker_b.resolve() if getattr(args, "gt_speaker_b", None) else None)
 
