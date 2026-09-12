@@ -18,6 +18,7 @@ def build_pipeline_parser(name: str) -> argparse.ArgumentParser:
     single.add_argument("--debug", action="store_true")
     if name == "duplexchat":
         single.add_argument("--split_conversation", action="store_true")
+        single.add_argument("--separate-chunk", type=float, default=90.0)
     single.add_argument("--gt-speaker-a", type=Path)
     single.add_argument("--gt-speaker-b", type=Path)
     return parser
@@ -36,6 +37,7 @@ def run_pipeline_command(name: str, argv: list[str] | None = None) -> int:
         from .single import run_single
         return run_single(name, args.input.resolve(), args.output_dir.resolve(), args.debug,
                            getattr(args, "split_conversation", False),
+                           getattr(args, "separate_chunk", 90.0),
                            args.gt_speaker_a.resolve() if args.gt_speaker_a else None,
                           args.gt_speaker_b.resolve() if args.gt_speaker_b else None)
 

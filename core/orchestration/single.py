@@ -11,6 +11,7 @@ from .contract import write_json
 
 
 def run_single(name: str, source: Path, output: Path, debug: bool, split_conversation: bool,
+               separate_chunk: float,
                gt_a: Path | None, gt_b: Path | None) -> int:
     """Run one adapter without ever passing reference audio to its worker."""
     from core.config import load_config
@@ -20,6 +21,7 @@ def run_single(name: str, source: Path, output: Path, debug: bool, split_convers
         raise ValueError("--gt-speaker-a and --gt-speaker-b must be provided together")
     cfg = load_config(ROOT / "configs/config.json")
     args = SimpleNamespace(debug=debug, split_conversation=split_conversation,
+                           separate_chunk=separate_chunk,
                            vilier_config=ROOT / "configs/vilier.json",
                            duplexchat_config=ROOT / "configs/duplexchat.json", sample_rate=16000)
     run_dir = output.parent / ".runs" / uuid.uuid4().hex

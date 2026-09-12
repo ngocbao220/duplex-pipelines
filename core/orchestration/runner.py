@@ -44,6 +44,7 @@ def pipeline_config(name, args, cfg):
     config['debug'] = bool(args.debug)
     if name == 'duplexchat':
         config['split_conversation'] = bool(getattr(args, 'split_conversation', False))
+        config['separate_chunk'] = float(getattr(args, 'separate_chunk', config.get('separate_chunk', 90.0)))
     return config
 
 

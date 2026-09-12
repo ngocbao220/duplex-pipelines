@@ -26,6 +26,17 @@ def test_duplexchat_cli_exposes_split_conversation_flag():
     assert args.split_conversation is True
 
 
+def test_duplexchat_cli_exposes_separate_chunk():
+    parser = build_pipeline_parser("duplexchat")
+
+    args = parser.parse_args([
+        "single", "--input", "mixture.wav", "--output-dir", "out",
+        "--separate-chunk", "30",
+    ])
+
+    assert args.separate_chunk == 30.0
+
+
 def test_duplexchat_cli_rejects_removed_conversation_scale_option():
     parser = build_pipeline_parser("duplexchat")
 

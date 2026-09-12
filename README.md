@@ -13,6 +13,22 @@ UV_CACHE_DIR=.uv-cache uv sync --project pipeline/duplexchat
 UV_CACHE_DIR=.uv-cache uv sync --project pipeline/sommelier
 ```
 
+Để chạy diarization bằng NVIDIA Streaming Sortformer, cài thêm thư viện hệ
+thống và NeMo trong môi trường DuplexChat:
+
+```bash
+apt-get update && apt-get install -y libsndfile1 ffmpeg
+pip install Cython packaging
+pip install git+https://github.com/NVIDIA/NeMo.git@main#egg=nemo_toolkit[asr]
+```
+
+Trong môi trường `uv`, có thể dùng lệnh tương đương sau khi đã sync project:
+
+```bash
+uv pip install Cython packaging
+uv pip install 'nemo_toolkit[asr]'
+```
+
 Vilier và Sommelier cần checkpoint SepReformer thật (`.pth`/`.pt`, không phải
 Git-LFS pointer):
 
